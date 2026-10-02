@@ -6,13 +6,28 @@ else is new code in `apps/shell/`.
 
 | Change | Purpose |
 |---|---|
-| `firmware/export/config/ipod6g.h` | defines `HAVE_IPODOS_SHELL` |
+| `firmware/export/config/ipod6g.h` | defines `HAVE_IPODOS_SHELL` (iPod Classic 6G/6.5G/7G) |
+| `firmware/export/config/ipodvideo.h` | defines `HAVE_IPODOS_SHELL` (iPod Video 5G/5.5G) |
 | `apps/main.c` | calls `shell_main()` instead of `root_menu()` when the flag is set |
 | `apps/SOURCES` | builds `apps/shell/*.c` when the flag is set |
 | `apps/shell/` | the shell, plus a copy of the ipdb reader (`device/ipdb/` in this repo) |
 
 Keep `apps/shell/ipdb.{c,h}` identical to `device/ipdb/`. The fuzzing and tests run against
 this repo's copy.
+
+## Targets
+
+| Rockbox target | Devices | SoC | RAM |
+|---|---|---|---|
+| `ipod6g` | Classic 6G, 6.5G, 7G | Samsung S5L8702, ARM926EJ-S | 64 MB |
+| `ipodvideo` | Video 5G, 5.5G | PortalPlayer PP5021C, dual ARM7TDMI | 32 MB (30 GB models) or 64 MB |
+
+The shell uses only Rockbox APIs that both targets provide. Both share a 320×240 RGB565 LCD
+and click wheel button codes. Build both targets for every change; `ipod6g` is the primary target.
+
+The 5G sets the performance and memory floor. It has a slower CPU without ARMv5E instructions,
+so optimized blit routines need an ARMv4 path. Its LCD updates go through the Broadcom video
+chip, and 30 GB models have 32 MB RAM, which lowers the library size cap.
 
 ## Boundary with Rockbox
 
@@ -33,7 +48,7 @@ and reachable through the fallback. They go once the shell covers settings and t
 Build (Linux, SDL2 development headers installed):
 
     git clone -b ipodos https://github.com/jt1900jt/rockbox.git && cd rockbox && mkdir build-sim && cd build-sim
-    ../tools/configure --target=ipod6g --type=s
+    ../tools/configure --target=ipod6g --type=s     (or --target=ipodvideo for the 5G)
     make -j && make fullinstall
 
 `make fullinstall` puts fonts and codecs into `build-sim/simdisk`, which is the simulator's disk root.
