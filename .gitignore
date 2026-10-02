@@ -1,0 +1,4 @@
+companion/target/
+device/ipdb_dump
+device/ipdb_fuzz
+*.o
