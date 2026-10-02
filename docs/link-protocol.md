@@ -56,3 +56,13 @@ fragmentation, resync, CRC failures, size limits and odd chunk sizes. `make test
 
 `companion/web/index.html` measures latency and throughput over Web Serial. Serve the folder
 from localhost (Web Serial needs a secure context) and open it in desktop Chrome or Edge.
+
+Latency is timed across a batch of round trips: browsers round `performance.now()` to 1 ms
+or coarser, so a single sub-millisecond round trip measures as zero.
+
+## Device receive path
+
+The OUT endpoint uses two buffers. When a transfer completes, the next one is armed into the
+other buffer before the finished buffer is copied into the receive ring, so the endpoint is
+never idle while the USB thread works. The USB LINK screen reports the share of time the
+endpoint had a transfer armed; anything well below 100% means the device is the bottleneck.

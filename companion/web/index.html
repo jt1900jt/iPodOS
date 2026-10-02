@@ -36,6 +36,7 @@
 
   <div class="row">
     <label>Size <select id="size"><option value="8">8 MB</option><option value="32" selected>32 MB</option><option value="128">128 MB</option></select></label>
+    <label>Write chunk <select id="chunk"><option value="4096">4 KB</option><option value="65536" selected>64 KB</option><option value="1048576">1 MB</option></select></label>
     <label><input type="checkbox" id="crc" checked> CRC</label>
     <button id="all" disabled>Run all</button>
     <button id="hello" class="secondary" disabled>Hello</button>
@@ -85,15 +86,16 @@ async function run(fn) {
 const tests = {
   async hello() { result('hello', 'ok', await link.hello()); },
   async echo() {
-    const times = [];
-    for (let i = 0; i < 100; i++) times.push(await link.echo(new Uint8Array(64).fill(i)));
-    times.sort((a, b) => a - b);
-    result('latency (64 B echo)', times[50].toFixed(2) + ' ms median', `p90 ${times[90].toFixed(2)} ms, min ${times[0].toFixed(2)} ms`);
+    // Timed as a batch: some browsers round performance.now() to 1 ms.
+    const n = 200, t0 = performance.now();
+    for (let i = 0; i < n; i++) await link.echo(new Uint8Array(64).fill(i & 0xff));
+    const avg = (performance.now() - t0) / n;
+    result('latency (64 B echo)', avg.toFixed(3) + ' ms avg', `${n} round trips`);
   },
   async sink() {
-    const n = +$('size').value * MB, crc = $('crc').checked;
-    const r = await link.sink(n, { crc });
-    result(`write ${n / MB} MB${crc ? ' +crc' : ''}`, mbps(r.bytes, r.seconds), `${r.seconds.toFixed(2)} s, device crc ${r.ok ? 'ok' : 'MISMATCH'}`, r.ok);
+    const n = +$('size').value * MB, crc = $('crc').checked, chunk = +$('chunk').value;
+    const r = await link.sink(n, { crc, chunk });
+    result(`write ${n / MB} MB, ${chunk / 1024} KB chunks${crc ? ' +crc' : ''}`, mbps(r.bytes, r.seconds), `${r.seconds.toFixed(2)} s, device crc ${r.ok ? 'ok' : 'MISMATCH'}`, r.ok);
   },
   async source() {
     const n = +$('size').value * MB, crc = $('crc').checked;
