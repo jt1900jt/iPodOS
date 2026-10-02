@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPod OS link test</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0b0c; --fg: #f4f4f2; --sub: #9c9c9a; --line: #2a2a2d; --ok: #7bd88f; --bad: #ff6b6b; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--sub); margin: 0 0 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; align-items: center; }
+  button { background: var(--fg); color: var(--bg); border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  label { color: var(--sub); }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 20px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  th { color: var(--sub); font-weight: 500; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre { background: #141416; border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; max-height: 260px; color: var(--sub); }
+  #status { font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>iPod OS link test</h1>
+  <p>On the iPod, open <b>USB LINK</b> from Home, then connect here. Chrome or Edge on desktop; serve this folder from localhost.</p>
+
+  <div class="row">
+    <button id="connect">Connect</button>
+    <button id="disconnect" class="secondary" disabled>Disconnect</button>
+    <span id="status">not connected</span>
+  </div>
+
+  <div class="row">
+    <label>Size <select id="size"><option value="8">8 MB</option><option value="32" selected>32 MB</option><option value="128">128 MB</option></select></label>
+    <label><input type="checkbox" id="crc" checked> CRC</label>
+    <button id="all" disabled>Run all</button>
+    <button id="hello" class="secondary" disabled>Hello</button>
+    <button id="echo" class="secondary" disabled>Latency</button>
+    <button id="sink" class="secondary" disabled>Write (to iPod)</button>
+    <button id="source" class="secondary" disabled>Read (from iPod)</button>
+  </div>
+
+  <table>
+    <thead><tr><th>Test</th><th>Result</th><th>Detail</th></tr></thead>
+    <tbody id="results"></tbody>
+  </table>
+
+  <pre id="log"></pre>
+</main>
+
+<script type="module">
+import { Link, openSerial } from './ipodlink.js';
+
+const $ = (id) => document.getElementById(id);
+const MB = 1 << 20;
+let port = null, transport = null, link = null, busy = false;
+
+const log = (msg) => { $('log').textContent += msg + '\n'; $('log').scrollTop = 1e9; };
+const result = (test, value, detail, ok = true) => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${test}</td><td class="${ok ? 'ok' : 'bad'}">${value}</td><td>${detail}</td>`;
+  $('results').prepend(tr);
+  log(`${test}: ${value} ${detail}`);
+};
+const setUi = () => {
+  const on = !!link;
+  for (const id of ['all', 'hello', 'echo', 'sink', 'source']) $(id).disabled = !on || busy;
+  $('connect').disabled = on;
+  $('disconnect').disabled = !on || busy;
+  $('status').textContent = on ? 'connected' : 'not connected';
+};
+const mbps = (bytes, s) => (bytes / MB / s).toFixed(2) + ' MB/s';
+
+async function run(fn) {
+  if (busy) return;
+  busy = true; setUi();
+  try { await fn(); } catch (e) { result('error', 'failed', e.message, false); }
+  busy = false; setUi();
+}
+
+const tests = {
+  async hello() { result('hello', 'ok', await link.hello()); },
+  async echo() {
+    const times = [];
+    for (let i = 0; i < 100; i++) times.push(await link.echo(new Uint8Array(64).fill(i)));
+    times.sort((a, b) => a - b);
+    result('latency (64 B echo)', times[50].toFixed(2) + ' ms median', `p90 ${times[90].toFixed(2)} ms, min ${times[0].toFixed(2)} ms`);
+  },
+  async sink() {
+    const n = +$('size').value * MB, crc = $('crc').checked;
+    const r = await link.sink(n, { crc });
+    result(`write ${n / MB} MB${crc ? ' +crc' : ''}`, mbps(r.bytes, r.seconds), `${r.seconds.toFixed(2)} s, device crc ${r.ok ? 'ok' : 'MISMATCH'}`, r.ok);
+  },
+  async source() {
+    const n = +$('size').value * MB, crc = $('crc').checked;
+    const r = await link.source(n, { crc });
+    const ok = r.bytes === n && r.crcErrors === 0;
+    result(`read ${n / MB} MB${crc ? ' +crc' : ''}`, mbps(r.bytes, r.seconds), `${r.seconds.toFixed(2)} s, ${r.frames} frames, ${r.crcErrors} crc errors`, ok);
+  },
+};
+
+$('connect').onclick = () => run(async () => {
+  if (!('serial' in navigator)) throw new Error('Web Serial not available: use desktop Chrome or Edge over http://localhost');
+  port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x05ac }] });
+  transport = await openSerial(port);
+  link = new Link(transport);
+  log('port opened');
+  await tests.hello();
+});
+$('disconnect').onclick = () => run(async () => { await transport.close(); link = null; transport = null; log('closed'); });
+$('hello').onclick = () => run(tests.hello);
+$('echo').onclick = () => run(tests.echo);
+$('sink').onclick = () => run(tests.sink);
+$('source').onclick = () => run(tests.source);
+$('all').onclick = () => run(async () => { await tests.hello(); await tests.echo(); await tests.sink(); await tests.source(); });
+navigator.serial?.addEventListener('disconnect', () => { link = null; transport = null; setUi(); log('device disconnected'); });
+setUi();
+</script>
+</body>
+</html>

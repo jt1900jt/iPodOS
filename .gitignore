@@ -1,4 +1,5 @@
 companion/target/
 device/ipdb_dump
 device/ipdb_fuzz
+device/link_host
 *.o
