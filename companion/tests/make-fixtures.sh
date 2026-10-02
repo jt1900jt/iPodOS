@@ -2,11 +2,13 @@
 # Regenerates tests/fixtures/library: short tagged files in every supported container,
 # with embedded art, folder art, a multi-disc album, a compilation, untagged and broken files.
 set -euo pipefail
+# Env: DUR = track length in seconds (default 1), OUT = library dir (default fixtures/library).
 cd "$(dirname "$0")"
-L=fixtures/library
+L=${OUT:-fixtures/library}
+DUR=${DUR:-1}
 rm -rf "$L" && mkdir -p "$L"
 q=(-hide_banner -loglevel error -y)
-tone() { echo "-f lavfi -i sine=frequency=$1:duration=1"; }
+tone() { echo "-f lavfi -i sine=frequency=$1:duration=$DUR"; }
 
 ffmpeg "${q[@]}" -f lavfi -i "mandelbrot=size=600x600:end_pts=1" -frames:v 1 fixtures/cover_a.jpg
 ffmpeg "${q[@]}" -f lavfi -i "testsrc2=size=500x500" -frames:v 1 fixtures/cover_b.png
