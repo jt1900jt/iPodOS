@@ -1,0 +1,29 @@
+[package]
+name = "ipdb"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Library database and art pack builder for the iPod OS companion"
+
+[features]
+default = ["fs", "cli"]
+fs = ["dep:walkdir"]
+cli = ["fs", "dep:clap"]
+
+[dependencies]
+anyhow = "1"
+crc32fast = "1"
+deunicode = "1"
+lofty = "=0.21.1"
+image = { version = "=0.25.2", default-features = false, features = ["jpeg", "png"] }
+sha1_smol = "1"
+walkdir = { version = "2", optional = true }
+clap = { version = "=4.5.20", features = ["derive"], optional = true }
+
+[[bin]]
+name = "ipdb"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[profile.release]
+lto = true
