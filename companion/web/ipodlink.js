@@ -97,11 +97,17 @@ export class Link {
     }
   }
 
-  async expect(type) {
-    const f = await this.frame();
-    if (f.type === T.ERROR) throw new LinkError('device error: ' + new TextDecoder().decode(f.payload));
-    if (f.type !== type) throw new LinkError(`expected frame 0x${type.toString(16)}, got 0x${f.type.toString(16)}`);
-    return f;
+  async expect(type, seq = this.seq - 1) {
+    // A cancelled or failed operation can leave replies in flight. Anything answering an
+    // older request is stale, so drop it rather than failing the current one.
+    for (let guard = 0; guard < 64; guard++) {
+      const f = await this.frame();
+      if (f.type === T.ERROR) throw new LinkError('device error: ' + new TextDecoder().decode(f.payload));
+      if (f.type === type) return f;
+      if (f.seq < seq) continue;
+      throw new LinkError(`expected frame 0x${type.toString(16)}, got 0x${f.type.toString(16)}`);
+    }
+    throw new LinkError('too many stale replies');
   }
 
   async send(type, payload = new Uint8Array(0), crc = false) {

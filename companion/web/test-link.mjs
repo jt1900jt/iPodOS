@@ -175,6 +175,17 @@ await step('delete', async () => {
 await step('path traversal refused', async () => {
   await assert.rejects(link.stat('/../etc/passwd'), /bad path/);
   await assert.rejects(link.mkdir('/..'), /bad path/);
+  await assert.rejects(link.stat('/Music/../../etc'), /bad path/);
+  await assert.rejects(link.stat('relative/path'), /bad path/);
+});
+
+await step('dots inside names are allowed', async () => {
+  // Real filenames contain runs of dots; only a whole ".." component escapes the root.
+  const p = '/Music/A Boogie Wit da Hoodie/Artist 2.0/13. R.O.D..m4a';
+  await link.putFile(p, new Uint8Array(64).fill(9));
+  assert.equal((await link.stat(p)).size, 64);
+  const entries = await link.list('/Music/A Boogie Wit da Hoodie/Artist 2.0');
+  assert.ok(entries.some((e) => e.name === '13. R.O.D..m4a'));
 });
 
 await step('free space', async () => {

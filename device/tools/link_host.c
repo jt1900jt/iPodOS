@@ -21,10 +21,18 @@ static char g_root[1024];
 static FILE *g_put;
 static char g_put_target[2048], g_put_tmp[2100];
 
+/* Only a whole ".." component escapes the sandbox; dots inside a filename are fine. */
 static int real_path(char *out, size_t n, const char *path)
 {
-    if (strstr(path, ".."))
-        return -1;
+    for (const char *p = path; *p;) {
+        const char *start = p;
+        while (*p && *p != '/')
+            p++;
+        if (p - start == 2 && start[0] == '.' && start[1] == '.')
+            return -1;
+        while (*p == '/')
+            p++;
+    }
     return snprintf(out, n, "%s%s", g_root, path) < (int)n ? 0 : -1;
 }
 
