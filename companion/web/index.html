@@ -26,10 +26,11 @@
 <body>
 <main>
   <h1>iPod OS link test</h1>
-  <p>On the iPod, open <b>USB LINK</b> from Home, then connect here. Chrome or Edge on desktop; serve this folder from localhost.</p>
+  <p>On the iPod, open <b>USB LINK</b> from Home, then connect here. Chrome or Edge on desktop; serve this folder from localhost. WebUSB talks to the vendor bulk interface; the serial button uses CDC-ACM, which the host tty layer throttles.</p>
 
   <div class="row">
-    <button id="connect">Connect</button>
+    <button id="connect">Connect (WebUSB)</button>
+    <button id="connectSerial" class="secondary">Connect (serial)</button>
     <button id="disconnect" class="secondary" disabled>Disconnect</button>
     <span id="status">not connected</span>
   </div>
@@ -54,7 +55,7 @@
 </main>
 
 <script type="module">
-import { Link, openSerial } from './ipodlink.js';
+import { Link, openSerial, openUsb, USB_FILTERS } from './ipodlink.js';
 
 const $ = (id) => document.getElementById(id);
 const MB = 1 << 20;
@@ -71,8 +72,9 @@ const setUi = () => {
   const on = !!link;
   for (const id of ['all', 'hello', 'echo', 'sink', 'source']) $(id).disabled = !on || busy;
   $('connect').disabled = on;
+  $('connectSerial').disabled = on;
   $('disconnect').disabled = !on || busy;
-  $('status').textContent = on ? 'connected' : 'not connected';
+  $('status').textContent = on ? `connected (${transport.kind})` : 'not connected';
 };
 const mbps = (bytes, s) => (bytes / MB / s).toFixed(2) + ' MB/s';
 
@@ -106,6 +108,14 @@ const tests = {
 };
 
 $('connect').onclick = () => run(async () => {
+  if (!('usb' in navigator)) throw new Error('WebUSB not available: use desktop Chrome or Edge over http://localhost');
+  const device = await navigator.usb.requestDevice({ filters: USB_FILTERS });
+  transport = await openUsb(device);
+  link = new Link(transport);
+  log('usb interface claimed');
+  await tests.hello();
+});
+$('connectSerial').onclick = () => run(async () => {
   if (!('serial' in navigator)) throw new Error('Web Serial not available: use desktop Chrome or Edge over http://localhost');
   port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x05ac }] });
   transport = await openSerial(port);
@@ -119,6 +129,7 @@ $('echo').onclick = () => run(tests.echo);
 $('sink').onclick = () => run(tests.sink);
 $('source').onclick = () => run(tests.source);
 $('all').onclick = () => run(async () => { await tests.hello(); await tests.echo(); await tests.sink(); await tests.source(); });
+navigator.usb?.addEventListener('disconnect', () => { link = null; transport = null; setUi(); log('device disconnected'); });
 navigator.serial?.addEventListener('disconnect', () => { link = null; transport = null; setUi(); log('device disconnected'); });
 setUi();
 </script>

@@ -156,14 +156,64 @@ export class Link {
   }
 }
 
-// Web Serial transport. Baud rate is ignored by CDC-ACM but required by the API.
+// --- transports ---
+
+// Web Serial (CDC-ACM). Works everywhere the port enumerates, but the host tty layer
+// fragments writes into small USB transfers, so host-to-device throughput is poor.
+// Baud rate is ignored by CDC-ACM but required by the API.
 export async function openSerial(port) {
   await port.open({ baudRate: 115200, bufferSize: 1 << 20 });
   const reader = port.readable.getReader();
   const writer = port.writable.getWriter();
   return {
+    kind: 'serial',
     async write(data) { await writer.write(data); },
     async read() { const { value, done } = await reader.read(); return done ? null : value; },
     async close() { reader.releaseLock(); writer.releaseLock(); await port.close(); },
+  };
+}
+
+export const USB_FILTERS = [{ vendorId: 0x05ac, classCode: 0xff, subclassCode: 0x49, protocolCode: 0x50 }];
+
+// WebUSB on the device's vendor-specific interface: bulk transfers go straight to the
+// endpoint with no tty layer in between.
+export async function openUsb(device, { readSize = 1 << 18 } = {}) {
+  await device.open();
+  if (!device.configuration) await device.selectConfiguration(1);
+
+  let iface = null, epIn = 0, epOut = 0;
+  for (const i of device.configuration.interfaces) {
+    const a = i.alternate;
+    if (a.interfaceClass === 0xff && a.interfaceSubclass === 0x49 && a.interfaceProtocol === 0x50) {
+      iface = i;
+      for (const ep of a.endpoints) {
+        if (ep.type !== 'bulk') continue;
+        if (ep.direction === 'in') epIn = ep.endpointNumber; else epOut = ep.endpointNumber;
+      }
+    }
+  }
+  if (!iface || !epIn || !epOut) throw new Error('no iPod OS bulk interface on this device');
+  await device.claimInterface(iface.interfaceNumber);
+
+  let closed = false;
+  return {
+    kind: 'webusb',
+    async write(data) {
+      const r = await device.transferOut(epOut, data);
+      if (r.status !== 'ok') throw new LinkError('transferOut ' + r.status);
+      if (r.bytesWritten !== data.length) throw new LinkError('short transferOut');
+    },
+    async read() {
+      if (closed) return null;
+      const r = await device.transferIn(epIn, readSize);
+      if (r.status === 'stall') { await device.clearHalt('in', epIn); return new Uint8Array(0); }
+      if (r.status !== 'ok') return null;
+      return new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength);
+    },
+    async close() {
+      closed = true;
+      try { await device.releaseInterface(iface.interfaceNumber); } catch {}
+      await device.close();
+    },
   };
 }

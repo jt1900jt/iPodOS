@@ -9,10 +9,28 @@ Device side: `device/link/link_proto.{c,h}`, vendored into the firmware as
 
 ## USB
 
-The firmware enables the CDC-ACM class and defaults USB to charge mode. When the iPod is
-plugged in it stays in the shell, and the host sees a serial port with VID `0x05AC`. Holding
-any button while plugging in inverts this and gives disk mode. On the device, open
+The firmware defaults USB to charge mode, so the iPod stays in the shell when plugged in.
+Holding any button while connecting inverts this and gives disk mode. On the device, open
 **USB LINK** from Home to run the link.
+
+Two transports are exposed, and the device uses whichever the host opened:
+
+| | Vendor bulk (WebUSB) | CDC-ACM (Web Serial) |
+|---|---|---|
+| Host API | WebUSB | Web Serial |
+| Interface | vendor class `0xFF`, subclass `0x49`, protocol `0x50` | CDC class |
+| Host to device | full speed | throttled |
+| Use | sync and bulk transfer | logging, terminal debugging |
+
+CDC-ACM is claimed by the host's serial tty layer, which fragments the browser's bulk writes
+into ~100-200 byte USB transfers whatever chunk size the host asks for. Measured on a 7G:
+12.2 MB/s device to host, but only 0.5-1.5 MB/s host to device. The vendor interface has no
+tty layer in between, so transfers reach the endpoint whole.
+
+The device advertises a BOS descriptor with two platform capabilities: WebUSB, so Chrome
+offers the device without a host driver, and Microsoft OS 2.0, so Windows binds WinUSB to the
+vendor interface automatically. Both are fetched with vendor request `0x21`; the MS OS 2.0
+descriptor set is at `wIndex` 7. Linux and macOS need no driver.
 
 ## Framing
 
@@ -62,7 +80,7 @@ or coarser, so a single sub-millisecond round trip measures as zero.
 
 ## Device receive path
 
-The OUT endpoint uses two buffers. When a transfer completes, the next one is armed into the
+Both transports share the same shape. The OUT endpoint uses two buffers. When a transfer completes, the next one is armed into the
 other buffer before the finished buffer is copied into the receive ring, so the endpoint is
 never idle while the USB thread works. The USB LINK screen reports the share of time the
 endpoint had a transfer armed; anything well below 100% means the device is the bottleneck.

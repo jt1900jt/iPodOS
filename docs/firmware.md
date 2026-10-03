@@ -36,6 +36,8 @@ The shell replaces the UI layer only. From Rockbox it uses:
 - the kernel, threads, and the buflib allocator (`core_alloc`; the library DB is one pinned allocation)
 - the file API, LCD drawing, bitmap fonts, and the button driver
 - `default_event_handler` for USB, power-off and other system events
+- the USB stack, with two added class drivers: `usbstack/usb_bulk.c` (vendor-class bulk for
+  the companion link) and a reworked `usb_serial.c` data path
 - the playlist API (`playlist_create`, `playlist_insert_track`, `playlist_start`) and playback (`audio_*`)
 - `global_settings` for shuffle and volume
 - `root_menu()` as a fallback, opened from the ROCKBOX home item or when no valid library exists
