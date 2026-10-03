@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 use ipdb::build::{build_library, BuildOptions};
 use ipdb::font;
+use ipdb::journal;
 use ipdb::format::*;
 use ipdb::read::{Db, PackHeader};
 use ipdb::{art, scan, write};
@@ -61,6 +62,17 @@ enum Cmd {
         /// Also write a PNG preview of each face
         #[arg(long)]
         preview: bool,
+    },
+    /// Read the device play journal: show statistics, or write a scrobble log
+    Journal {
+        /// Directory holding journal.bin, e.g. <ipod mount>/.ipodos
+        dir: PathBuf,
+        /// Write an Audioscrobbler log here
+        #[arg(long)]
+        scrobble: Option<PathBuf>,
+        /// Delete the journal once it has been read
+        #[arg(long)]
+        clear: bool,
     },
     /// Validate library.ipdb and artwork.ipap in a directory
     Verify { dir: PathBuf },
@@ -309,6 +321,73 @@ fn cmd_dump(path: &Path, tracks: bool, albums: bool) -> Result<()> {
     Ok(())
 }
 
+fn cmd_journal(dir: &Path, scrobble: Option<&Path>, clear: bool) -> Result<()> {
+    let path = dir.join("journal.bin");
+    let raw = match fs::read(&path) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("no journal yet ({})", path.display());
+            return Ok(());
+        }
+        Err(e) => return Err(e).context("reading journal"),
+    };
+    let events = journal::parse(&raw);
+    let stats = journal::merge(&events);
+
+    // Resolve uids through the library so the output names tracks.
+    let db_buf = fs::read(dir.join(DB_NAME)).ok();
+    let db = db_buf.as_deref().map(Db::parse).transpose()?;
+    let mut by_uid: std::collections::HashMap<u32, usize> = Default::default();
+    if let Some(db) = &db {
+        for i in 0..db.track_count() {
+            by_uid.insert(db.track(i).uid, i);
+        }
+    }
+
+    println!("{} events, {} tracks touched", events.len(), stats.len());
+    let mut rows: Vec<(&u32, &journal::Stats)> = stats.iter().collect();
+    rows.sort_by(|a, b| b.1.plays.cmp(&a.1.plays).then(a.0.cmp(b.0)));
+    for (uid, s) in rows.iter().take(40) {
+        let name = match (&db, by_uid.get(uid)) {
+            (Some(db), Some(&i)) => {
+                let t = db.track(i);
+                format!("{} — {}", db.string(t.title), db.string(db.group(sec::ARTS, t.artist_id as usize).name))
+            }
+            _ => format!("uid {uid:08x}"),
+        };
+        let mut extra = String::new();
+        if let Some(r) = s.rating {
+            extra.push_str(&format!(" rating {r}"));
+        }
+        if let Some(p) = s.position_ms {
+            extra.push_str(&format!(" resume {}s", p / 1000));
+        }
+        println!("  {:>3} plays {:>3} skips  {name}{extra}", s.plays, s.skips);
+    }
+
+    if let Some(out) = scrobble {
+        let log = journal::scrobble_log(&events, |uid| {
+            let db = db.as_ref()?;
+            let i = *by_uid.get(&uid)?;
+            let t = db.track(i);
+            Some((
+                db.string(db.group(sec::ARTS, t.artist_id as usize).name).to_string(),
+                db.string(t.title).to_string(),
+                db.string(db.albums_title(t.album_id)).to_string(),
+                t.duration_ms / 1000,
+            ))
+        })?;
+        fs::write(out, log)?;
+        println!("wrote {}", out.display());
+    }
+
+    if clear {
+        fs::remove_file(&path)?;
+        println!("journal cleared");
+    }
+    Ok(())
+}
+
 fn read_pack_header(dir: &Path) -> Result<PackHeader> {
     let path = dir.join(ART_NAME);
     let len = fs::metadata(&path)?.len();
@@ -374,6 +453,7 @@ fn main() -> Result<()> {
         Cmd::Build { source, out, prefix, generation } => cmd_build(&source, &out, &prefix, generation),
         Cmd::Dump { path, tracks, albums } => cmd_dump(&path, tracks, albums),
         Cmd::Fonts { out, ttf_dir, preview } => cmd_fonts(&out, ttf_dir.as_deref(), preview),
+        Cmd::Journal { dir, scrobble, clear } => cmd_journal(&dir, scrobble.as_deref(), clear),
         Cmd::Verify { dir } => cmd_verify(&dir),
         Cmd::ArtExport { dir, class, id, out } => cmd_art_export(&dir, &class, id, &out),
     }

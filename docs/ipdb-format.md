@@ -210,9 +210,22 @@ Readers look up classes by ID, never by position, so sizes can change without a 
 
 RGB565, little-endian `u16`, row-major, no padding. Each image is center-cropped to the class's aspect ratio, resampled, and converted to RGB565 with Floyd–Steinberg dithering. An image that fails to decode is filled with `0x2104` (dark grey).
 
-## Journal (draft)
+## Journal
 
-The journal is `/.ipodos/journal.bin` on the device, an append-only file with one record per event. The companion reads it, merges it into host state, and truncates it after a successful sync.
+The journal is `/.ipodos/journal.bin` on the device, an append-only file with one record per
+event. The library is read-only, so counts, ratings and resume positions cannot be written
+back into it; they go here instead. The companion reads the journal, merges it into host
+state, and deletes it after a successful sync (`ipdb journal <dir> --clear`).
+
+Each record is appended and flushed, so a power cut can lose at most the last event and
+never leaves partial state. A trailing partial record is ignored by the reader, as are
+records with an unknown type, so a newer device can add event types without breaking an
+older companion.
+
+A play counts when the track reached half its length or four minutes, whichever comes
+first; anything short of that is a skip. The device tracks the furthest point reached
+rather than the last sampled position, since playback resets elapsed for the next track
+before the change is noticed.
 
 | Off | Type | Field |
 |---|---|---|

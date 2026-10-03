@@ -225,6 +225,11 @@ impl<'a> Db<'a> {
         }
     }
 
+    /// String offset of an album's title, for callers that only have the album id.
+    pub fn albums_title(&self, album_id: u32) -> u32 {
+        self.album(album_id as usize).title
+    }
+
     pub fn group(&self, id: [u8; 4], i: usize) -> GroupRec {
         let b = &self.sec(id).0[i * GROUP_SIZE..(i + 1) * GROUP_SIZE];
         GroupRec { name: u32_at(b, 0), first: u32_at(b, 4), count: u32_at(b, 8), extra: u32_at(b, 12) }
