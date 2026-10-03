@@ -31,12 +31,14 @@ pub struct FaceSpec {
 }
 
 pub const FACES: &[FaceSpec] = &[
-    FaceSpec { name: "title-18", ttf: "Inter-SemiBold.ttf", px: 18, tracking: 0 },
-    FaceSpec { name: "menu-14", ttf: "Inter-SemiBold.ttf", px: 14, tracking: 1 },
-    FaceSpec { name: "row-13", ttf: "Inter-SemiBold.ttf", px: 13, tracking: 0 },
-    FaceSpec { name: "body-12", ttf: "Inter-Medium.ttf", px: 12, tracking: 0 },
-    FaceSpec { name: "sub-11", ttf: "Inter-Regular.ttf", px: 11, tracking: 0 },
-    FaceSpec { name: "caps-10", ttf: "Inter-SemiBold.ttf", px: 10, tracking: 1 },
+    FaceSpec { name: "title-20", ttf: "Inter-SemiBold.ttf", px: 20, tracking: 0 },
+    FaceSpec { name: "menu-15", ttf: "Inter-SemiBold.ttf", px: 15, tracking: 1 },
+    FaceSpec { name: "menu-17", ttf: "Inter-SemiBold.ttf", px: 17, tracking: 1 },
+    FaceSpec { name: "row-14", ttf: "Inter-SemiBold.ttf", px: 14, tracking: 0 },
+    FaceSpec { name: "row-15", ttf: "Inter-SemiBold.ttf", px: 15, tracking: 0 },
+    FaceSpec { name: "body-13", ttf: "Inter-Medium.ttf", px: 13, tracking: 0 },
+    FaceSpec { name: "sub-12", ttf: "Inter-Regular.ttf", px: 12, tracking: 0 },
+    FaceSpec { name: "caps-11", ttf: "Inter-SemiBold.ttf", px: 11, tracking: 1 },
 ];
 
 struct Glyph {
