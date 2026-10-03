@@ -124,3 +124,15 @@ checks, which are what make the accessors bounds-safe, always run.
 - A play request queues at most `max_playlist_size` tracks, centered on the selection.
 - No resume of the last queue at boot.
 - No animated transitions between screens.
+
+## Sync
+
+`shell_sync.c` provides the filesystem operations the companion drives over the link
+(see link-protocol.md). The iPod stays in the shell while connected, so syncing needs no
+disk mode and does not interrupt playback.
+
+Transfers are staged to a temporary file and renamed on commit. The companion writes music
+first, then deletions, then artwork, and the library last, so an interrupted sync leaves
+the device showing its previous library rather than one referencing files that never
+arrived. The verification stamp is removed with each new library, forcing a fresh checksum
+on the next boot.

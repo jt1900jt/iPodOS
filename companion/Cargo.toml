@@ -9,6 +9,12 @@ description = "Library database and art pack builder for the iPod OS companion"
 default = ["fs", "cli"]
 fs = ["dep:walkdir"]
 cli = ["fs", "dep:clap"]
+# Browser build: no filesystem, no CLI, exposes the C ABI in src/wasm.rs.
+wasm = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "ipdb"
 
 [dependencies]
 anyhow = "1"

@@ -63,6 +63,32 @@ garbage. A CRC mismatch on a request produces an ERROR reply instead of the norm
 | 0x84 | ECHO_R | device → host | the same bytes, with CRC if the request had one |
 | 0xFF | ERROR | device → host | ASCII message |
 
+### File operations (sync)
+
+| Type | Name | Payload |
+|---|---|---|
+| 0x10 | STAT | path → STAT_R: `u8 kind` (0 missing, 1 file, 2 dir), `u32 size`, `u32 mtime` |
+| 0x11 | LIST | path → zero or more LIST_R frames, then OK |
+| 0x12 | MKDIR | path → OK; an existing directory is success |
+| 0x13 | PUT_BEGIN | `u32 size`, `u32 crc`, `u8 flags`, path → OK |
+| 0x14 | PUT_DATA | file bytes, up to 16384 per frame; no reply |
+| 0x15 | PUT_END | none → OK with `u32 bytes written`, or ERROR |
+| 0x16 | GET | path → DATA frames, then GET_DONE with `u32 bytes` |
+| 0x17 | DELETE | path → OK |
+| 0x18 | FREE | none → FREE_R: `u64 free`, `u64 total` |
+| 0x19 | SYNC_DONE | none → OK; the shell reloads its library |
+
+A LIST_R payload packs entries back to back: `u8 kind`, `u32 size`, `u32 mtime`,
+`u16 name_len`, name. Entries are split across frames as needed, so a directory with
+thousands of files needs no special handling.
+
+Writes are staged: PUT_BEGIN opens a temporary file, PUT_DATA appends to it, and
+PUT_END renames it over the target only when the byte count and CRC both match. An
+interrupted sync therefore never leaves a half-written file under its real name, and
+missing parent directories are created automatically.
+
+Paths must be absolute and may not contain `..`; the device rejects anything else.
+
 ## Tests
 
 `device/tools/link_host` runs the device-side code over stdin/stdout.

@@ -3,8 +3,15 @@
 
 export const T = {
   HELLO: 0x01, SINK: 0x02, SOURCE: 0x03, ECHO: 0x04,
-  HELLO_R: 0x81, SINK_ACK: 0x82, DATA: 0x83, ECHO_R: 0x84, SOURCE_DONE: 0x85, ERROR: 0xff,
+  STAT: 0x10, LIST: 0x11, MKDIR: 0x12, PUT_BEGIN: 0x13, PUT_DATA: 0x14, PUT_END: 0x15,
+  GET: 0x16, DELETE: 0x17, FREE: 0x18, SYNC_DONE: 0x19,
+  HELLO_R: 0x81, SINK_ACK: 0x82, DATA: 0x83, ECHO_R: 0x84, SOURCE_DONE: 0x85,
+  OK: 0x86, STAT_R: 0x87, LIST_R: 0x88, GET_DONE: 0x89, FREE_R: 0x8a, ERROR: 0xff,
 };
+
+export const PUT_F_CRC = 0x01;
+/* Chunk the device accepts per frame; matches LINK_CHUNK_MAX. */
+export const CHUNK = 16384;
 export const F_CRC = 0x01;
 const HDR = 16;
 
@@ -36,6 +43,9 @@ export function header(type, flags, seq, len, crc) {
 }
 
 export class LinkError extends Error {}
+
+const enc = (s) => new TextEncoder().encode(s);
+const dec = (b) => new TextDecoder().decode(b);
 
 export class Link {
   constructor(transport) {
@@ -99,6 +109,94 @@ export class Link {
     await this.t.write(header(type, crc ? F_CRC : 0, seq, payload.length, crc ? crc32(payload) : 0));
     if (payload.length) await this.t.write(payload);
     return seq;
+  }
+
+  // --- file operations ---
+
+  async stat(path) {
+    await this.send(T.STAT, enc(path));
+    const f = await this.expect(T.STAT_R);
+    const v = new DataView(f.payload.buffer, f.payload.byteOffset);
+    return { kind: f.payload[0], size: v.getUint32(1, true), mtime: v.getUint32(5, true) };
+  }
+
+  async list(path) {
+    await this.send(T.LIST, enc(path));
+    const out = [];
+    for (;;) {
+      const f = await this.frame();
+      if (f.type === T.LIST_R) {
+        let o = 0;
+        const v = new DataView(f.payload.buffer, f.payload.byteOffset, f.payload.byteLength);
+        while (o + 11 <= f.payload.length) {
+          const kind = f.payload[o];
+          const size = v.getUint32(o + 1, true);
+          const mtime = v.getUint32(o + 5, true);
+          const nlen = f.payload[o + 9] | (f.payload[o + 10] << 8);
+          o += 11;
+          out.push({ name: dec(f.payload.subarray(o, o + nlen)), kind, size, mtime });
+          o += nlen;
+        }
+      } else if (f.type === T.OK) {
+        return out;
+      } else if (f.type === T.ERROR) {
+        throw new LinkError('device error: ' + dec(f.payload));
+      }
+    }
+  }
+
+  async mkdir(path) { await this.send(T.MKDIR, enc(path)); await this.expect(T.OK); }
+  async remove(path) { await this.send(T.DELETE, enc(path)); await this.expect(T.OK); }
+
+  async free() {
+    await this.send(T.FREE);
+    const f = await this.expect(T.FREE_R);
+    const v = new DataView(f.payload.buffer, f.payload.byteOffset);
+    return { free: Number(v.getBigUint64(0, true)), total: Number(v.getBigUint64(8, true)) };
+  }
+
+  async syncDone() { await this.send(T.SYNC_DONE); await this.expect(T.OK); }
+
+  // Streams a file to the device. The device stages it and renames on commit, so an
+  // interrupted transfer never leaves a half-written file under its real name.
+  async putFile(path, data, { crc = true, onProgress } = {}) {
+    const head = new Uint8Array(9 + enc(path).length);
+    const v = new DataView(head.buffer);
+    v.setUint32(0, data.length, true);
+    v.setUint32(4, crc ? crc32(data) : 0, true);
+    head[8] = crc ? PUT_F_CRC : 0;
+    head.set(enc(path), 9);
+    await this.send(T.PUT_BEGIN, head);
+    await this.expect(T.OK);
+
+    for (let off = 0; off < data.length; off += CHUNK) {
+      const piece = data.subarray(off, Math.min(off + CHUNK, data.length));
+      await this.t.write(header(T.PUT_DATA, 0, this.seq++, piece.length, 0));
+      await this.t.write(piece);
+      if (onProgress) onProgress(Math.min(off + CHUNK, data.length), data.length);
+    }
+    await this.send(T.PUT_END);
+    const f = await this.expect(T.OK);
+    if (f.payload.length >= 4) {
+      const got = new DataView(f.payload.buffer, f.payload.byteOffset).getUint32(0, true);
+      if (got !== data.length) throw new LinkError(`short write: ${got} of ${data.length}`);
+    }
+  }
+
+  async getFile(path) {
+    await this.send(T.GET, enc(path));
+    const parts = [];
+    let total = 0;
+    for (;;) {
+      const f = await this.frame();
+      if (f.type === T.DATA) { parts.push(f.payload); total += f.payload.length; }
+      else if (f.type === T.GET_DONE) break;
+      else if (f.type === T.ERROR) throw new LinkError('device error: ' + dec(f.payload));
+    }
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
   }
 
   async hello() {

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPod OS sync</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0b0c; --panel:#141416; --fg:#f4f4f2; --sub:#9c9c9a; --line:#2a2a2d; --ok:#7bd88f; --bad:#ff6b6b; --warn:#f4c76b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  main { max-width: 820px; margin:0 auto; padding:36px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 6px; letter-spacing:-0.01em; }
+  .lede { color:var(--sub); margin:0 0 26px; }
+  .step { border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:14px; background:var(--panel); }
+  .step[data-state="done"] { border-color:#2f5d3a; }
+  .step h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:var(--sub); margin:0 0 10px; font-weight:600; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  button { background:var(--fg); color:var(--bg); border:0; border-radius:7px; padding:9px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  button:disabled { opacity:.35; cursor:default; }
+  .status { color:var(--sub); }
+  .status.ok { color:var(--ok); } .status.bad { color:var(--bad); } .status.warn { color:var(--warn); }
+  progress { width:100%; height:8px; margin-top:12px; accent-color:var(--fg); }
+  .detail { font-size:12px; color:var(--sub); margin-top:6px; min-height:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  pre { background:#0e0e10; border:1px solid var(--line); border-radius:7px; padding:11px; overflow:auto; max-height:220px; color:var(--sub); font-size:12px; margin:12px 0 0; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  td { padding:5px 4px; border-bottom:1px solid var(--line); }
+  td:last-child { text-align:right; color:var(--sub); font-variant-numeric:tabular-nums; }
+  .hint { font-size:12px; color:var(--sub); margin-top:8px; }
+  code { background:#1c1c20; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>iPod OS sync</h1>
+  <p class="lede">On the iPod, open <b>Settings → USB Link</b>. Then connect below and pick your music folder.</p>
+
+  <div class="step" id="s-connect">
+    <h2>1 · Device</h2>
+    <div class="row">
+      <button id="connect">Connect</button>
+      <button id="disconnect" class="secondary" disabled>Disconnect</button>
+      <span class="status" id="devStatus">not connected</span>
+    </div>
+    <div class="detail" id="devDetail"></div>
+  </div>
+
+  <div class="step" id="s-folder">
+    <h2>2 · Music folder</h2>
+    <div class="row">
+      <button id="pick" class="secondary">Choose folder…</button>
+      <span class="status" id="folderStatus">none chosen</span>
+    </div>
+    <div class="detail" id="folderDetail"></div>
+  </div>
+
+  <div class="step" id="s-sync">
+    <h2>3 · Sync</h2>
+    <div class="row">
+      <button id="sync" disabled>Sync to iPod</button>
+      <button id="journal" class="secondary" disabled>Read play history</button>
+      <span class="status" id="syncStatus"></span>
+    </div>
+    <progress id="bar" value="0" max="1" hidden></progress>
+    <div class="detail" id="syncDetail"></div>
+    <table id="summary" hidden></table>
+  </div>
+
+  <pre id="log" hidden></pre>
+  <p class="hint">Chrome or Edge on desktop. Serve this folder over <code>http://localhost</code>. The library builder is WebAssembly; run <code>companion/build-wasm.sh</code> once to produce <code>ipdb.wasm</code>.</p>
+</main>
+
+<script type="module">
+import { Link, openUsb, USB_FILTERS } from './ipodlink.js';
+import { Builder } from './builder.js';
+import * as sync from './sync.js';
+
+const $ = (id) => document.getElementById(id);
+let transport = null, link = null, dir = null, hostFiles = null, builder = null, busy = false;
+
+const log = (msg) => {
+  const el = $('log');
+  el.hidden = false;
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+};
+const setStatus = (id, text, cls = '') => {
+  const el = $(id);
+  el.textContent = text;
+  el.className = 'status ' + cls;
+};
+const markDone = (id, done) => $(id).dataset.state = done ? 'done' : '';
+
+function refresh() {
+  $('connect').disabled = !!link || busy;
+  $('disconnect').disabled = !link || busy;
+  $('pick').disabled = busy;
+  $('sync').disabled = !link || !hostFiles || busy;
+  $('journal').disabled = !link || busy;
+  markDone('s-connect', !!link);
+  markDone('s-folder', !!hostFiles);
+}
+
+async function guard(fn) {
+  if (busy) return;
+  busy = true; refresh();
+  try { await fn(); }
+  catch (e) { setStatus('syncStatus', e.message, 'bad'); log('error: ' + e.message); }
+  busy = false; refresh();
+}
+
+$('connect').onclick = () => guard(async () => {
+  if (!('usb' in navigator)) throw new Error('WebUSB needs desktop Chrome or Edge over http://localhost');
+  const device = await navigator.usb.requestDevice({ filters: USB_FILTERS });
+  transport = await openUsb(device);
+  link = new Link(transport);
+  const hello = await link.hello();
+  const free = await link.free();
+  setStatus('devStatus', 'connected', 'ok');
+  $('devDetail').textContent =
+    `${hello} · ${sync.fmtBytes(free.free)} free of ${sync.fmtBytes(free.total)}`;
+  log('connected: ' + hello);
+});
+
+$('disconnect').onclick = () => guard(async () => {
+  await transport.close();
+  link = transport = null;
+  setStatus('devStatus', 'not connected');
+  $('devDetail').textContent = '';
+});
+
+$('pick').onclick = () => guard(async () => {
+  if (!window.showDirectoryPicker) throw new Error('this browser cannot open folders');
+  dir = await window.showDirectoryPicker({ id: 'ipodos-music', mode: 'read' });
+  setStatus('folderStatus', 'scanning…');
+  hostFiles = [];
+  let bytes = 0;
+  for await (const f of sync.walk(dir)) {
+    const file = await f.handle.getFile();
+    hostFiles.push({
+      relPath: f.path,
+      devicePath: sync.devicePath(f.path),
+      size: file.size,
+      mtime: Math.floor(file.lastModified / 1000),
+      handle: f.handle,
+    });
+    bytes += file.size;
+    if (hostFiles.length % 50 === 0) setStatus('folderStatus', `${hostFiles.length} tracks…`);
+  }
+  setStatus('folderStatus', `${hostFiles.length} tracks`, hostFiles.length ? 'ok' : 'warn');
+  $('folderDetail').textContent = `${dir.name} · ${sync.fmtBytes(bytes)}`;
+  log(`scanned ${hostFiles.length} tracks (${sync.fmtBytes(bytes)})`);
+});
+
+// Reads every track once to parse tags and render art. Done here rather than on the
+// device because the iPod cannot decode JPEG at any useful speed.
+async function buildLibrary(files) {
+  if (!builder) {
+    setStatus('syncStatus', 'loading builder…');
+    builder = await Builder.load();
+  }
+  builder.reset();
+  const folderArt = new Map();
+  let n = 0;
+  for (const f of files) {
+    const data = new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
+    if (!builder.addTrack(f.relPath, data, f.mtime)) log('skipped (unreadable tags): ' + f.relPath);
+    if (++n % 25 === 0) {
+      setStatus('syncStatus', `reading tags ${n}/${files.length}`);
+      $('bar').value = n / files.length;
+      await new Promise((r) => setTimeout(r)); // let the page repaint
+    }
+  }
+
+  // Folder covers, for albums with no embedded art.
+  for (const f of files) {
+    const slash = f.relPath.lastIndexOf('/');
+    const parent = slash < 0 ? '' : f.relPath.slice(0, slash);
+    if (folderArt.has(parent)) continue;
+    folderArt.set(parent, null);
+    for (const name of ['cover.jpg', 'folder.jpg', 'cover.png', 'folder.png', 'front.jpg']) {
+      try {
+        let d = dir;
+        for (const part of parent ? parent.split('/') : []) d = await d.getDirectoryHandle(part);
+        const fh = await d.getFileHandle(name);
+        const bytes = new Uint8Array(await (await fh.getFile()).arrayBuffer());
+        builder.addFolderArt(parent, bytes);
+        break;
+      } catch { /* no cover of that name here */ }
+    }
+  }
+
+  setStatus('syncStatus', 'rendering artwork…');
+  await new Promise((r) => setTimeout(r));
+  const built = builder.build('/Music');
+  if (built.warnings) log(built.warnings);
+  const fonts = builder.fonts();
+  log(`built: ${built.tracks} tracks, ${sync.fmtBytes(built.db.length)} database, ${sync.fmtBytes(built.art.length)} artwork`);
+  return { db: built.db, art: built.art, fonts };
+}
+
+$('sync').onclick = () => guard(async () => {
+  $('bar').hidden = false;
+  $('summary').hidden = true;
+  const t0 = performance.now();
+  const r = await sync.run(link, hostFiles, buildLibrary, (e) => {
+    if (e.total) { $('bar').max = e.total; $('bar').value = e.done || 0; }
+    setStatus('syncStatus', e.phase);
+    if (e.detail) $('syncDetail').textContent = e.detail;
+  });
+  const secs = (performance.now() - t0) / 1000;
+  $('bar').hidden = true;
+  $('syncDetail').textContent = '';
+  setStatus('syncStatus', 'done', 'ok');
+  $('summary').hidden = false;
+  $('summary').innerHTML =
+    `<tr><td>Copied</td><td>${r.uploaded} files · ${sync.fmtBytes(r.bytes)}</td></tr>` +
+    `<tr><td>Removed</td><td>${r.removed}</td></tr>` +
+    `<tr><td>Time</td><td>${secs.toFixed(1)} s</td></tr>`;
+  log(`sync complete in ${secs.toFixed(1)} s`);
+});
+
+$('journal').onclick = () => guard(async () => {
+  const data = await sync.pullJournal(link);
+  if (!data) { setStatus('syncStatus', 'no play history yet', 'warn'); return; }
+  const events = [];
+  for (let o = 0; o + 16 <= data.length; o += 16) {
+    const v = new DataView(data.buffer, data.byteOffset + o);
+    events.push({ kind: data[o], uid: v.getUint32(4, true), when: v.getUint32(8, true) });
+  }
+  const plays = events.filter((e) => e.kind === 1).length;
+  const skips = events.filter((e) => e.kind === 2).length;
+  setStatus('syncStatus', `${plays} plays, ${skips} skips`, 'ok');
+  log(`play history: ${events.length} events (${plays} plays, ${skips} skips)`);
+  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'journal.bin';
+  a.textContent = 'download journal.bin';
+  $('syncDetail').replaceChildren(a);
+});
+
+navigator.usb?.addEventListener('disconnect', () => {
+  link = transport = null;
+  setStatus('devStatus', 'disconnected', 'bad');
+  refresh();
+});
+refresh();
+</script>
+</body>
+</html>

@@ -4,8 +4,9 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { Link, T, header, LinkError } from './ipodlink.js';
 
-function harness(bin, seed) {
-  const p = spawn(bin, [String(seed)], { stdio: ['pipe', 'pipe', 'inherit'] });
+function harness(bin, seed, root) {
+  const args = root ? [String(seed), root] : [String(seed)];
+  const p = spawn(bin, args, { stdio: ['pipe', 'pipe', 'inherit'] });
   const queue = [];
   let wake = null, ended = false;
   p.stdout.on('data', (d) => { queue.push(new Uint8Array(d)); if (wake) { wake(); wake = null; } });
@@ -23,9 +24,14 @@ function harness(bin, seed) {
   };
 }
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const bin = process.argv[2] || '../../device/link_host';
 const MB = 1 << 20;
-const t = harness(bin, 42);
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ipodos-link-'));
+const t = harness(bin, 42, root);
 const link = new Link(t);
 const results = [];
 const step = async (name, fn) => { await fn(); results.push(name); };
@@ -98,6 +104,93 @@ await step('payload crc mismatch -> error', async () => {
   await assert.rejects(link.expect(T.ECHO_R), /crc mismatch/);
 });
 
+// --- file operations ---
+
+await step('mkdir and stat', async () => {
+  await link.mkdir('/Music');
+  const st = await link.stat('/Music');
+  assert.equal(st.kind, 2);
+  assert.equal((await link.stat('/nope')).kind, 0);
+});
+
+await step('put, stat, get round trip', async () => {
+  const data = new Uint8Array(100_000).map((_, i) => (i * 31 + 7) & 0xff);
+  await link.putFile('/Music/Artist/Album/track.flac', data);
+  const st = await link.stat('/Music/Artist/Album/track.flac');
+  assert.equal(st.kind, 1);
+  assert.equal(st.size, data.length);
+  const back = await link.getFile('/Music/Artist/Album/track.flac');
+  assert.equal(back.length, data.length);
+  assert.deepEqual(back, data);
+});
+
+await step('put creates missing parents', async () => {
+  await link.putFile('/a/b/c/d.txt', new TextEncoder().encode('hi'));
+  assert.equal((await link.stat('/a/b/c/d.txt')).size, 2);
+});
+
+await step('empty file', async () => {
+  await link.putFile('/empty.bin', new Uint8Array(0));
+  assert.equal((await link.stat('/empty.bin')).size, 0);
+  assert.equal((await link.getFile('/empty.bin')).length, 0);
+});
+
+await step('bad crc leaves no file behind', async () => {
+  const data = new Uint8Array(5000).fill(3);
+  const head = new Uint8Array(9 + new TextEncoder().encode('/bad.bin').length);
+  const v = new DataView(head.buffer);
+  v.setUint32(0, data.length, true);
+  v.setUint32(4, 0xdeadbeef, true); // wrong on purpose
+  head[8] = 1;
+  head.set(new TextEncoder().encode('/bad.bin'), 9);
+  await link.send(T.PUT_BEGIN, head);
+  await link.expect(T.OK);
+  await link.send(T.PUT_DATA, data);
+  await link.send(T.PUT_END);
+  await assert.rejects(link.expect(T.OK), /transfer failed/);
+  assert.equal((await link.stat('/bad.bin')).kind, 0, 'partial file must not be committed');
+});
+
+await step('list', async () => {
+  const entries = await link.list('/Music/Artist/Album');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].name, 'track.flac');
+  assert.equal(entries[0].kind, 1);
+  assert.equal(entries[0].size, 100_000);
+});
+
+await step('list many entries spans frames', async () => {
+  await link.mkdir('/many');
+  for (let i = 0; i < 300; i++) await link.putFile(`/many/file-${i}.txt`, new Uint8Array(4));
+  const entries = await link.list('/many');
+  assert.equal(entries.length, 300);
+  assert.equal(new Set(entries.map((e) => e.name)).size, 300);
+});
+
+await step('delete', async () => {
+  await link.remove('/empty.bin');
+  assert.equal((await link.stat('/empty.bin')).kind, 0);
+});
+
+await step('path traversal refused', async () => {
+  await assert.rejects(link.stat('/../etc/passwd'), /bad path/);
+  await assert.rejects(link.mkdir('/..'), /bad path/);
+});
+
+await step('free space', async () => {
+  const f = await link.free();
+  assert.ok(f.total > 0 && f.free > 0 && f.free <= f.total);
+});
+
+await step('sync done', async () => { await link.syncDone(); });
+
+await step('transport still works after file ops', async () => {
+  assert.match(await link.hello(), /host-harness/);
+  const r = await link.sink(1 * MB);
+  assert.equal(r.ok, true);
+});
+
 t.proc.stdin.end();
 await new Promise((r) => t.proc.on('exit', r));
+fs.rmSync(root, { recursive: true, force: true });
 console.log(`link protocol: ${results.length} checks passed`);

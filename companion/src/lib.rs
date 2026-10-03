@@ -10,6 +10,7 @@ pub mod model;
 pub mod read;
 pub mod sortkey;
 pub mod tags;
+pub mod wasm;
 pub mod write;
 
 #[cfg(feature = "fs")]
