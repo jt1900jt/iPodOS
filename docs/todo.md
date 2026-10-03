@@ -21,6 +21,14 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
   work settles. The 5G sets the performance floor: slower CPU, no ARMv5E instructions, LCD
   updates through the Broadcom chip, and 32 MB RAM on 30 GB models.
 
+## UI
+
+- **Wheel acceleration.** Rockbox exposes wheel velocity; the shell currently moves one row
+  per click regardless of speed.
+- **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
+  feasible; needs measuring against the partial-redraw budget first.
+- **Resume at boot.** Restore the last queue and position.
+
 ## Firmware
 
 - **Release toolchain.** Builds here use the distro ARM GCC 13 rather than Rockbox's pinned

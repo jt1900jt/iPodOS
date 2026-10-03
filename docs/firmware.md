@@ -84,11 +84,43 @@ Space = play/pause, Left/Right = previous/next.
 
 Selecting the ROCKBOX home item leaves the shell, and scripted input stops at that point.
 
-## Phase 1 limits
+## Rendering
 
-- Bitmap fonts and full-screen `lcd_update()`. The compositor, dirty rects and AA fonts are phase 3.
-- Thumbnails are the album's dominant color, not art. The art loader is phase 3.
+`shell_gfx.c` draws straight into Rockbox's RGB565 framebuffer and tracks a dirty rectangle;
+`gfx_flush()` pushes it once per frame. A full-screen push costs ~25 ms on the 7G and scales
+with pixel count, so screens repaint only what changed: moving the selection repaints two
+rows, and the Now Playing tick repaints the progress area.
+
+Text comes from `.ipfn` atlases (see font-format.md) with 8-bit coverage, blended per pixel,
+so it stays sharp over art and gradients. Rockbox's own fonts are 1-bit and are not used by
+the shell.
+
+Gradients, washes and blends are ordered-dithered. Dark gradients band badly in RGB565, and
+the design is mostly dark gradients.
+
+## Album art
+
+`shell_art.c` keeps a small cache of pre-rendered RGB565 slots read from `artwork.ipap`, with
+a background loader thread at `PRIORITY_BACKGROUND`. `art_get()` returns a cached image or
+NULL and queues a load, so the UI thread never waits on storage; the album's stored dominant
+colour stands in until the art arrives. Rows just outside the viewport are prefetched so
+scrolling finds them resident, and the queue is cleared on a view change so stale prefetches
+do not crowd out what is now on screen.
+
+The pack is ignored when its generation does not match the library, which would otherwise
+pair covers with the wrong albums.
+
+## Library load
+
+The CRC covers the whole file and dominates load time (589 ms for a 7 MB library on the 7G,
+against 24 ms for the structural checks). `/.ipodos/.verified` records the generation, size
+and CRC last verified, so an unchanged library skips the CRC on later boots. The structural
+checks, which are what make the accessors bounds-safe, always run.
+
+## Remaining limits
+
 - No wheel acceleration. Long lists use previous/next to jump by letter.
 - Now Playing finds the DB track by a linear path search once per track change.
 - A play request queues at most `max_playlist_size` tracks, centered on the selection.
 - No resume of the last queue at boot.
+- No animated transitions between screens.
