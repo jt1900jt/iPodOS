@@ -17,6 +17,7 @@ deunicode = "1"
 lofty = "=0.21.1"
 image = { version = "=0.25.2", default-features = false, features = ["jpeg", "png"] }
 sha1_smol = "1"
+ab_glyph = "=0.2.29"
 walkdir = { version = "2", optional = true }
 clap = { version = "=4.5.20", features = ["derive"], optional = true }
 

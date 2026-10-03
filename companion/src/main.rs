@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use ipdb::build::{build_library, BuildOptions};
+use ipdb::font;
 use ipdb::format::*;
 use ipdb::read::{Db, PackHeader};
 use ipdb::{art, scan, write};
@@ -48,6 +49,18 @@ enum Cmd {
         /// List albums with their tracks
         #[arg(long)]
         albums: bool,
+    },
+    /// Build the UI font atlases into <out>/fonts
+    Fonts {
+        /// Output directory, e.g. <ipod mount>/.ipodos
+        #[arg(long)]
+        out: PathBuf,
+        /// Directory holding the Inter .ttf files (defaults to the built-in copies)
+        #[arg(long)]
+        ttf_dir: Option<PathBuf>,
+        /// Also write a PNG preview of each face
+        #[arg(long)]
+        preview: bool,
     },
     /// Validate library.ipdb and artwork.ipap in a directory
     Verify { dir: PathBuf },
@@ -141,6 +154,53 @@ fn cmd_build(source: &Path, out: &Path, prefix: &str, generation: Option<u64>) -
         fs::metadata(out.join(ART_NAME))?.len(),
         t0.elapsed()
     );
+    Ok(())
+}
+
+/// The four Inter weights are compiled in so the CLI works without the repo checkout.
+fn builtin_ttf(name: &str) -> Option<&'static [u8]> {
+    match name {
+        "Inter-Regular.ttf" => Some(include_bytes!("../assets/Inter-Regular.ttf")),
+        "Inter-Medium.ttf" => Some(include_bytes!("../assets/Inter-Medium.ttf")),
+        "Inter-SemiBold.ttf" => Some(include_bytes!("../assets/Inter-SemiBold.ttf")),
+        "Inter-Bold.ttf" => Some(include_bytes!("../assets/Inter-Bold.ttf")),
+        _ => None,
+    }
+}
+
+fn cmd_fonts(out: &Path, ttf_dir: Option<&Path>, preview: bool) -> Result<()> {
+    let dir = out.join("fonts");
+    fs::create_dir_all(&dir)?;
+    for f in font::FACES {
+        let ttf: Vec<u8> = match ttf_dir {
+            Some(d) => fs::read(d.join(f.ttf)).with_context(|| format!("reading {}", d.join(f.ttf).display()))?,
+            None => builtin_ttf(f.ttf).with_context(|| format!("no built-in copy of {}", f.ttf))?.to_vec(),
+        };
+        let atlas = font::build_face(&ttf, f.px, f.tracking)?;
+        let path = dir.join(format!("{}.ipfn", f.name));
+        fs::write(&path, &atlas)?;
+        println!("{:<10} {:>3}px  {:>6} bytes  {}", f.name, f.px, atlas.len(), f.ttf);
+        if preview {
+            let png = dir.join(format!("{}.png", f.name));
+            font_preview(&atlas, &png)?;
+        }
+    }
+    Ok(())
+}
+
+/// Render a sample string from an atlas so the glyphs can be eyeballed without a device.
+fn font_preview(atlas: &[u8], out: &Path) -> Result<()> {
+    const SAMPLE: &str = "Halcyon Drift \u{2022} Low Tide Lights 3:00 \u{00C5}\u{00D8}\u{2014}";
+    let g = font::Atlas::parse(atlas)?;
+    let (w, h) = (g.measure(SAMPLE) as u32 + 8, g.line_height() as u32 + 8);
+    let mut img = image::GrayImage::new(w.max(1), h.max(1));
+    g.draw(SAMPLE, 4, 4 + g.ascent() as i32, |x, y, a| {
+        if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+            let p = img.get_pixel_mut(x as u32, y as u32);
+            p[0] = p[0].max(a);
+        }
+    });
+    img.save(out)?;
     Ok(())
 }
 
@@ -313,6 +373,7 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Build { source, out, prefix, generation } => cmd_build(&source, &out, &prefix, generation),
         Cmd::Dump { path, tracks, albums } => cmd_dump(&path, tracks, albums),
+        Cmd::Fonts { out, ttf_dir, preview } => cmd_fonts(&out, ttf_dir.as_deref(), preview),
         Cmd::Verify { dir } => cmd_verify(&dir),
         Cmd::ArtExport { dir, class, id, out } => cmd_art_export(&dir, &class, id, &out),
     }

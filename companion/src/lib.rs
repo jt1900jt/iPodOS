@@ -3,6 +3,7 @@
 
 pub mod art;
 pub mod build;
+pub mod font;
 pub mod format;
 pub mod model;
 pub mod read;
