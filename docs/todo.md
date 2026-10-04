@@ -21,6 +21,14 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
   work settles. The 5G sets the performance floor: slower CPU, no ARMv5E instructions, LCD
   updates through the Broadcom chip, and 32 MB RAM on 30 GB models.
 
+## Sync
+
+- **Throughput.** A full 15.1 GB library synced at 4.1 MB/s against the 9.6 MB/s the
+  transport benchmarks at. Frames are now batched into 256 KB USB writes and the next
+  file is read while the current one transfers; measure again before chasing further.
+  Remaining candidates: pipelining PUT_BEGIN/PUT_END round trips across files, and
+  letting the device acknowledge less often.
+
 ## UI
 
 - **Wheel acceleration.** Rockbox exposes wheel velocity; the shell currently moves one row

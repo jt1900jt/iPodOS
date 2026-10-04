@@ -10,8 +10,11 @@ export const T = {
 };
 
 export const PUT_F_CRC = 0x01;
-/* Chunk the device accepts per frame; matches LINK_CHUNK_MAX. */
+/* Frame payload limit on the device (LINK_CHUNK_MAX). */
 export const CHUNK = 16384;
+/* Bytes handed to the USB stack per transferOut. Larger writes mean fewer round trips;
+ * the device reassembles frames from the byte stream, so this is independent of CHUNK. */
+export const WRITE_BLOCK = 262144;
 export const F_CRC = 0x01;
 const HDR = 16;
 
@@ -175,12 +178,25 @@ export class Link {
     await this.send(T.PUT_BEGIN, head);
     await this.expect(T.OK);
 
+    // Frames are built into large blocks and handed to USB in one write each: a
+    // transferOut per 16 KB chunk is dominated by round-trip latency, not bandwidth.
+    let block = new Uint8Array(Math.min(WRITE_BLOCK, data.length + 16 * Math.ceil(data.length / CHUNK) + 16));
+    let used = 0;
+    const flush = async () => {
+      if (!used) return;
+      await this.t.write(block.subarray(0, used));
+      used = 0;
+    };
     for (let off = 0; off < data.length; off += CHUNK) {
       const piece = data.subarray(off, Math.min(off + CHUNK, data.length));
-      await this.t.write(header(T.PUT_DATA, 0, this.seq++, piece.length, 0));
-      await this.t.write(piece);
+      if (used + 16 + piece.length > block.length) await flush();
+      block.set(header(T.PUT_DATA, 0, this.seq++, piece.length, 0), used);
+      used += 16;
+      block.set(piece, used);
+      used += piece.length;
       if (onProgress) onProgress(Math.min(off + CHUNK, data.length), data.length);
     }
+    await flush();
     await this.send(T.PUT_END);
     const f = await this.expect(T.OK);
     if (f.payload.length >= 4) {

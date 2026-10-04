@@ -115,10 +115,16 @@ export async function run(link, hostFiles, build, report = () => {}) {
   }
 
   // 1. Music first: the database that will reference these files is written last.
+  //    The next file is read while the current one transfers, so the link is not idle
+  //    waiting on disk.
+  const readFile = async (f) => new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
   let sent = 0;
-  for (const f of p.upload) {
+  let ahead = p.upload.length ? readFile(p.upload[0]) : null;
+  for (let i = 0; i < p.upload.length; i++) {
+    const f = p.upload[i];
     report({ phase: 'copy', done: sent, total: p.bytes, detail: f.relPath });
-    const data = new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
+    const data = await ahead;
+    ahead = i + 1 < p.upload.length ? readFile(p.upload[i + 1]) : null;
     await link.putFile(f.devicePath, data, {
       onProgress: (n) => report({ phase: 'copy', done: sent + n, total: p.bytes, detail: f.relPath }),
     });
