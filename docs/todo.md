@@ -31,11 +31,8 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
-- **Wheel acceleration.** Rockbox exposes wheel velocity; the shell currently moves one row
-  per click regardless of speed.
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.
-- **Resume at boot.** Restore the last queue and position.
 
 ## Firmware
 
