@@ -117,6 +117,21 @@ against 24 ms for the structural checks). `/.ipodos/.verified` records the gener
 and CRC last verified, so an unchanged library skips the CRC on later boots. The structural
 checks, which are what make the accessors bounds-safe, always run.
 
+## Cover Flow
+
+Covers are drawn flat at three sizes with progressive dimming rather than with a
+perspective transform. A real projection means per-pixel sampling of every side cover,
+and a full-screen push already costs 25 ms on the 7G; scaling and dimming read as depth
+at this size for a fraction of the work. Neighbouring covers are prefetched three deep,
+so turning the wheel finds them already loaded.
+
+## Seeking
+
+Holding left or right accumulates an offset and seeks once on release. Seeking on every
+repeat makes the engine rebuffer each time, which is audible as stuttering and uneven
+jumps. The progress bar previews the target while the key is held, and each step is
+capped against the distance remaining so the end of a track is approached smoothly.
+
 ## Remaining limits
 
 - No wheel acceleration. Long lists use previous/next to jump by letter.
@@ -124,6 +139,7 @@ checks, which are what make the accessors bounds-safe, always run.
 - A play request queues at most `max_playlist_size` tracks, centered on the selection.
 - No resume of the last queue at boot.
 - No animated transitions between screens.
+- Cover Flow is static: covers change on the wheel with no motion between them.
 
 ## Sync
 

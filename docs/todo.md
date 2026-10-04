@@ -31,6 +31,9 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
+- **Cover Flow motion.** Covers currently jump between positions; sliding them would need
+  a frame budget measured against the 39 fps full-screen ceiling.
+
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.
 
