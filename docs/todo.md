@@ -31,12 +31,9 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
-- **Cover Flow performance.** Scrolling is slow on hardware. Each turn of the wheel
-  repaints the whole screen (~25 ms push) and rescales up to five covers in software.
-  Candidates, in order: cache the scaled side covers rather than rescaling every frame
-  (the same albums recur as the selection moves), repaint only the cover strip instead of
-  the full screen, and pre-render a small size class in the art pack so the side covers
-  need no scaling at all. Motion between covers is only worth attempting after that.
+- **Cover Flow motion.** Covers jump between positions rather than sliding. Worth
+  attempting now that a wheel click repaints a strip rather than the screen, but it needs
+  a frame budget measured against the 39 fps full-screen ceiling first.
 
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.

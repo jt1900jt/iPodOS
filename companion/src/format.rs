@@ -114,9 +114,12 @@ impl ArtClass {
     }
 }
 
-pub const ART_CLASSES: [ArtClass; 4] = [
+pub const ART_CLASSES: [ArtClass; 5] = [
     ArtClass { id: *b"THMB", width: 28, height: 28, blur: false },
     ArtClass { id: *b"HEAD", width: 52, height: 52, blur: false },
+    // Cover Flow's side covers. Pre-rendered rather than scaled on the device: scaling
+    // four covers per wheel click in software is the bulk of that screen's cost.
+    ArtClass { id: *b"SIDE", width: 74, height: 74, blur: false },
     ArtClass { id: *b"LRGE", width: 116, height: 116, blur: false },
     ArtClass { id: *b"BLUR", width: 80, height: 60, blur: true },
 ];

@@ -201,10 +201,13 @@ Neighbouring list rows have neighbouring album IDs, so a screenful of thumbnails
 |---|---|---|
 | `THMB` | 28×28 | list rows |
 | `HEAD` | 52×52 | list headers (playlist, album) |
+| `SIDE` | 74×74 | Cover Flow side covers |
 | `LRGE` | 116×116 | Now Playing and Home |
 | `BLUR` | 80×60 | background: blurred, center-cropped to 4:3, upscaled on device |
 
-Readers look up classes by ID, never by position, so sizes can change without a version bump.
+Readers look up classes by ID, never by position, so sizes can change, and new classes can
+be added, without a version bump: an older device ignores a class it does not know, and a
+newer device falls back to scaling when a class is missing from an older pack.
 
 ### Pixels
 
