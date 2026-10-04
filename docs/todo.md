@@ -31,11 +31,24 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
-- **Cover Flow motion.** Covers currently jump between positions; sliding them would need
-  a frame budget measured against the 39 fps full-screen ceiling.
+- **Cover Flow performance.** Scrolling is slow on hardware. Each turn of the wheel
+  repaints the whole screen (~25 ms push) and rescales up to five covers in software.
+  Candidates, in order: cache the scaled side covers rather than rescaling every frame
+  (the same albums recur as the selection moves), repaint only the cover strip instead of
+  the full screen, and pre-render a small size class in the art pack so the side covers
+  need no scaling at all. Motion between covers is only worth attempting after that.
 
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.
+
+## Audio
+
+- **Headphone hiss.** Present in both the shell and stock Rockbox, with and without
+  playback, so it is below our code: either Rockbox's codec driver or the hardware.
+  Next step is comparing against the Apple firmware. If Apple is quiet, look at gain
+  staging on the Cirrus codec (Rockbox may run the analog amp hot and attenuate
+  digitally); if not, suspect the iFlash adapter coupling into the analog ground, the
+  jack, or simply low-impedance headphones exposing the noise floor.
 
 ## Firmware
 
