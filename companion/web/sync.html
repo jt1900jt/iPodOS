@@ -205,12 +205,13 @@ async function buildLibrary(files) {
   log(`tags: ${cached} from cache, ${parsed} read${dropped ? `, ${dropped} stale dropped` : ''}`);
 
   // Folder covers, for albums with no embedded art. Cached tracks already carry their
-  // cover inside the blob, so only directories touched this run need checking.
+  // cover inside the blob; this handles the rest, one lookup per directory.
+  const folderArt = new Set();
   for (const f of files) {
     const slash = f.relPath.lastIndexOf('/');
     const parent = slash < 0 ? '' : f.relPath.slice(0, slash);
     if (folderArt.has(parent)) continue;
-    folderArt.set(parent, null);
+    folderArt.add(parent);
     for (const name of ['cover.jpg', 'folder.jpg', 'cover.png', 'folder.png', 'front.jpg']) {
       try {
         let d = dir;
