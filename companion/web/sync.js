@@ -16,9 +16,28 @@ const AUDIO_EXT = new Set([
   'wav', 'aif', 'aiff', 'wv', 'ape', 'mpc',
 ]);
 
-export function isAudio(name) {
+// Formats whose tags, cover art and duration all live in a header at the start of the
+// file. For these the first slice is enough to parse, which matters on a first sync:
+// reading a 15 GB library in full just to find its tags takes as long as copying it.
+//
+// MP3 and MP4 are deliberately absent. An MP4's index can sit at either end of the file,
+// and an MP3's duration is derived from the stream length, so a truncated read gives a
+// wrong answer rather than no answer, which is worse.
+const HEAD_ONLY = new Set(['flac', 'ogg', 'oga', 'opus']);
+export const HEAD_BYTES = 1 << 20;
+
+export function ext(name) {
   const dot = name.lastIndexOf('.');
-  return dot > 0 && AUDIO_EXT.has(name.slice(dot + 1).toLowerCase());
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+/** How much of a file must be read to parse its tags: a prefix, or all of it. */
+export function readSize(name, size) {
+  return HEAD_ONLY.has(ext(name)) ? Math.min(size, HEAD_BYTES) : size;
+}
+
+export function isAudio(name) {
+  return AUDIO_EXT.has(ext(name));
 }
 
 // FAT32 rejects these, and a track whose tags contain one would otherwise fail to

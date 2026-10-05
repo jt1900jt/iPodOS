@@ -178,7 +178,7 @@ async function buildLibrary(files) {
   // Tags come from the cache where the file is unchanged. Reading every file to parse
   // tags is what made an otherwise no-op sync take as long as the first one.
   const tags = await history.loadTags();
-  let parsed = 0, cached = 0;
+  let parsed = 0, cached = 0, bytesRead = 0, reread = 0;
   for (let n = 0; n < files.length; n++) {
     const f = files[n];
     const key = history.tagKey(f);
@@ -186,12 +186,22 @@ async function buildLibrary(files) {
     if (blob && builder.addCached(f.relPath, blob)) {
       cached++;
     } else {
-      const data = new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
-      if (builder.addTrack(f.relPath, data, f.mtime)) {
-        tags.set(key, builder.lastBlob());
-      } else {
-        log('skipped (unreadable tags): ' + f.relPath);
+      // Only as much of the file as the format needs; see sync.readSize. A prefix that
+      // lands mid-metadata is refused rather than half-parsed, so fall back to the whole
+      // file: a cover larger than the slice would otherwise lose the track entirely.
+      const file = await f.handle.getFile();
+      const want = sync.readSize(f.relPath, f.size);
+      let data = new Uint8Array(await (want < f.size ? file.slice(0, want) : file).arrayBuffer());
+      bytesRead += data.length;
+      let ok = builder.addTrack(f.relPath, data, f.mtime);
+      if (!ok && want < f.size) {
+        data = new Uint8Array(await file.arrayBuffer());
+        bytesRead += data.length;
+        ok = builder.addTrack(f.relPath, data, f.mtime);
+        if (ok) reread++;
       }
+      if (ok) tags.set(key, builder.lastBlob());
+      else log('skipped (unreadable tags): ' + f.relPath);
       parsed++;
     }
     if ((n + 1) % 25 === 0 || n + 1 === files.length) {
@@ -202,7 +212,9 @@ async function buildLibrary(files) {
   }
   const dropped = history.pruneTags(tags, files);
   await history.saveTags(tags);
-  log(`tags: ${cached} from cache, ${parsed} read${dropped ? `, ${dropped} stale dropped` : ''}`);
+  log(`tags: ${cached} from cache, ${parsed} read (${sync.fmtBytes(bytesRead)})`
+      + `${reread ? `, ${reread} needed the whole file` : ''}`
+      + `${dropped ? `, ${dropped} stale dropped` : ''}`);
 
   // Folder covers, for albums with no embedded art. Cached tracks already carry their
   // cover inside the blob; this handles the rest, one lookup per directory.

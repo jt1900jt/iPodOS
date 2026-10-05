@@ -174,3 +174,29 @@ fn a_corrupt_blob_is_refused_so_the_caller_can_fall_back() {
         assert_eq!(ipdb_track_count(), 0);
     }
 }
+
+#[test]
+fn a_short_read_fails_rather_than_lying() {
+    // The browser reads only a prefix of formats that keep tags in a header. A prefix
+    // that lands mid-metadata must be refused, not parsed into a half-filled track, so
+    // the caller knows to re-read the whole file.
+    unsafe {
+        let rel = "Halcyon Drift/Low Tide Lights/01 After the Static.flac";
+        let full = std::fs::read(fixture(rel)).unwrap();
+
+        ipdb_reset();
+        assert_eq!(ipdb_add_track(rel.as_ptr(), rel.len(), full.as_ptr(), full.len(), 7), 1);
+        let from_full = std::slice::from_raw_parts(ipdb_blob_ptr(), ipdb_blob_len()).to_vec();
+
+        // Half the file cuts through the embedded cover.
+        let head = &full[..full.len() / 2];
+        ipdb_reset();
+        assert_eq!(ipdb_add_track(rel.as_ptr(), rel.len(), head.as_ptr(), head.len(), 7), 0,
+                   "a truncated file must be refused");
+        assert_eq!(ipdb_track_count(), 0);
+
+        // Reading it whole after the refusal gives the same result as always.
+        assert_eq!(ipdb_add_track(rel.as_ptr(), rel.len(), full.as_ptr(), full.len(), 7), 1);
+        assert_eq!(std::slice::from_raw_parts(ipdb_blob_ptr(), ipdb_blob_len()), &from_full[..]);
+    }
+}

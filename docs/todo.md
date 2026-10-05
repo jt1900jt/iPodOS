@@ -31,19 +31,19 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
-- **Cover Flow motion.** Covers jump between positions rather than sliding. Worth
-  attempting now that a wheel click repaints a strip rather than the screen, but it needs
-  a frame budget measured against the 39 fps full-screen ceiling first.
+- **Cover Flow motion on hardware.** The slide is in, but its frame rate has only been
+  seen in the simulator; check it against the 39 fps ceiling on the device and shorten the
+  slide if it drags.
 
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.
 
 ## Companion
 
-- **Partial reads for first-time parsing.** A file is still read whole the first time, to
-  find its tags. Most formats keep them near the start, so reading the first megabyte and
-  falling back to the whole file would cut the first sync too; MP4 is the awkward case,
-  since its index can sit at either end.
+- **Partial reads for MP3.** FLAC, Ogg and Opus are now parsed from a one-megabyte
+  prefix. MP3 still needs the whole file because its duration is derived from the stream
+  length, and MP4 because its index can sit at either end; both would need the real length
+  passed alongside a prefix.
 
 - **Scrobbling.** `ipdb journal --scrobble` writes an Audioscrobbler log, but nothing
   uploads it; the browser could submit to Last.fm or ListenBrainz directly.
