@@ -77,6 +77,21 @@ export class Builder {
     return ok;
   }
 
+  /** Cache blob for the track added by the last addTrack() call. */
+  lastBlob() {
+    return this.read(this.x.ipdb_blob_ptr(), this.x.ipdb_blob_len());
+  }
+
+  /** Adds a track from a cached blob. Returns false if the blob is unusable. */
+  addCached(relPath, blob) {
+    const [pp, pl] = this.putText(relPath);
+    const [bp, bl] = this.put(blob);
+    const ok = this.x.ipdb_add_cached(pp, pl, bp, bl) === 1;
+    this.free(bp, bl);
+    this.free(pp, pl);
+    return ok;
+  }
+
   addFolderArt(dir, bytes) {
     const [pp, pl] = this.putText(dir);
     const [dp, dl] = this.put(bytes);

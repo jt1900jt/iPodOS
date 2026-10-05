@@ -40,6 +40,11 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## Companion
 
+- **Partial reads for first-time parsing.** A file is still read whole the first time, to
+  find its tags. Most formats keep them near the start, so reading the first megabyte and
+  falling back to the whole file would cut the first sync too; MP4 is the awkward case,
+  since its index can sit at either end.
+
 - **Scrobbling.** `ipdb journal --scrobble` writes an Audioscrobbler log, but nothing
   uploads it; the browser could submit to Last.fm or ListenBrainz directly.
 - **Playlist editing.** Playlists come only from .m3u files or the generated smart lists;

@@ -60,6 +60,7 @@
       <button id="sync" disabled>Sync to iPod</button>
       <button id="journal" class="secondary" disabled>Read play history</button>
       <button id="forget" class="secondary">Forget history</button>
+      <button id="reread" class="secondary">Re-read tags</button>
       <span class="status" id="syncStatus"></span>
     </div>
     <progress id="bar" value="0" max="1" hidden></progress>
@@ -100,6 +101,7 @@ function refresh() {
   $('sync').disabled = !link || !hostFiles || busy;
   $('journal').disabled = !link || busy;
   $('forget').disabled = busy;
+  $('reread').disabled = busy;
   markDone('s-connect', !!link);
   markDone('s-folder', !!hostFiles);
 }
@@ -172,19 +174,38 @@ async function buildLibrary(files) {
   if (added) await history.save(hist);
   for (const [uid, s] of hist) builder.addHistory(uid, s);
   log(`history: ${hist.size} tracks tracked${added ? `, ${added} newly added` : ''}`);
-  const folderArt = new Map();
-  let n = 0;
-  for (const f of files) {
-    const data = new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
-    if (!builder.addTrack(f.relPath, data, f.mtime)) log('skipped (unreadable tags): ' + f.relPath);
-    if (++n % 25 === 0) {
-      setStatus('syncStatus', `reading tags ${n}/${files.length}`);
-      $('bar').value = n / files.length;
+
+  // Tags come from the cache where the file is unchanged. Reading every file to parse
+  // tags is what made an otherwise no-op sync take as long as the first one.
+  const tags = await history.loadTags();
+  let parsed = 0, cached = 0;
+  for (let n = 0; n < files.length; n++) {
+    const f = files[n];
+    const key = history.tagKey(f);
+    const blob = tags.get(key);
+    if (blob && builder.addCached(f.relPath, blob)) {
+      cached++;
+    } else {
+      const data = new Uint8Array(await (await f.handle.getFile()).arrayBuffer());
+      if (builder.addTrack(f.relPath, data, f.mtime)) {
+        tags.set(key, builder.lastBlob());
+      } else {
+        log('skipped (unreadable tags): ' + f.relPath);
+      }
+      parsed++;
+    }
+    if ((n + 1) % 25 === 0 || n + 1 === files.length) {
+      setStatus('syncStatus', `reading tags ${n + 1}/${files.length}`);
+      $('bar').value = (n + 1) / files.length;
       await new Promise((r) => setTimeout(r)); // let the page repaint
     }
   }
+  const dropped = history.pruneTags(tags, files);
+  await history.saveTags(tags);
+  log(`tags: ${cached} from cache, ${parsed} read${dropped ? `, ${dropped} stale dropped` : ''}`);
 
-  // Folder covers, for albums with no embedded art.
+  // Folder covers, for albums with no embedded art. Cached tracks already carry their
+  // cover inside the blob, so only directories touched this run need checking.
   for (const f of files) {
     const slash = f.relPath.lastIndexOf('/');
     const parent = slash < 0 ? '' : f.relPath.slice(0, slash);
@@ -257,6 +278,12 @@ $('journal').onclick = () => guard(async () => {
   const played = [...hist.values()].reduce((n, s) => n + s.plays, 0);
   $('syncDetail').textContent =
     `${hist.size} tracks tracked, ${played} plays all time — smart playlists update on the next sync`;
+});
+
+$('reread').onclick = () => guard(async () => {
+  await history.clearTags();
+  setStatus('syncStatus', 'tag cache cleared', 'warn');
+  $('syncDetail').textContent = 'the next sync will read every file again';
 });
 
 $('forget').onclick = () => guard(async () => {

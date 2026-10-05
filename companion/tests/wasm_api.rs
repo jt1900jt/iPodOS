@@ -130,3 +130,47 @@ fn alloc_and_free_round_trip() {
         let _ = std::ptr::null::<c_void>();
     }
 }
+
+#[test]
+fn cached_blobs_reproduce_the_same_library() {
+    unsafe {
+        // First pass: parse the files and keep each track's cache blob.
+        ipdb_reset();
+        let files = [
+            "Halcyon Drift/Low Tide Lights/01 After the Static.flac",
+            "Mara Vell/Paper Moons/01 Barrow Lane.mp3",
+            "The Quiet Hours/Northbound/CD1/01 Copper Sky.m4a",
+        ];
+        let mut blobs = Vec::new();
+        for f in files {
+            assert_eq!(add(f, f), 1);
+            blobs.push(std::slice::from_raw_parts(ipdb_blob_ptr(), ipdb_blob_len()).to_vec());
+        }
+        let prefix = "/Music";
+        assert_eq!(ipdb_build(prefix.as_ptr(), prefix.len(), 77), 3);
+        let from_files = db_bytes();
+        let art_from_files = art_bytes();
+
+        // Second pass: feed the blobs back, never touching the files.
+        ipdb_reset();
+        for (f, blob) in files.iter().zip(&blobs) {
+            assert_eq!(ipdb_add_cached(f.as_ptr(), f.len(), blob.as_ptr(), blob.len()), 1,
+                       "cached blob should be accepted for {f}");
+        }
+        assert_eq!(ipdb_build(prefix.as_ptr(), prefix.len(), 77), 3);
+
+        assert_eq!(db_bytes(), from_files, "cached build must match the parsed one");
+        assert_eq!(art_bytes(), art_from_files, "artwork must survive the cache");
+    }
+}
+
+#[test]
+fn a_corrupt_blob_is_refused_so_the_caller_can_fall_back() {
+    unsafe {
+        ipdb_reset();
+        let p = "x.flac";
+        let junk = [1u8, 2, 3, 4, 5, 6];
+        assert_eq!(ipdb_add_cached(p.as_ptr(), p.len(), junk.as_ptr(), junk.len()), 0);
+        assert_eq!(ipdb_track_count(), 0);
+    }
+}

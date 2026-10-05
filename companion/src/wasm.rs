@@ -31,6 +31,8 @@ struct State {
     /// Embedded or sidecar art, indexed by `TrackMeta::art_source`.
     art_blobs: Vec<Vec<u8>>,
     history: std::collections::HashMap<u32, crate::history::Stats>,
+    /// Blob for the most recently added track, for the caller to cache.
+    blob: Vec<u8>,
     db: Vec<u8>,
     art: Vec<u8>,
     font: Vec<u8>,
@@ -98,6 +100,7 @@ pub unsafe extern "C" fn ipdb_add_track(
         let st = &mut *s.borrow_mut();
         match crate::tags::read_bytes(data, &ext) {
             Ok(read) => {
+                let pic_for_blob = read.picture.clone();
                 let mut meta = read.meta;
                 meta.rel_path = rel;
                 meta.file_size = data.len().min(u32::MAX as usize) as u32;
@@ -115,6 +118,7 @@ pub unsafe extern "C" fn ipdb_add_track(
                         st.art_blobs.len() - 1
                     }
                 });
+                st.blob = crate::cache::encode(&meta, pic_for_blob.as_deref());
                 st.tracks.push(meta);
                 1
             }
@@ -122,6 +126,43 @@ pub unsafe extern "C" fn ipdb_add_track(
                 st.warnings.push(format!("{rel}: {e}"));
                 0
             }
+        }
+    })
+}
+
+/// Adds a track from a cached blob, skipping the file entirely. Returns 1 on success,
+/// 0 if the blob is unusable, in which case the caller should fall back to the file.
+///
+/// # Safety
+/// Pointers must be valid for their lengths.
+#[no_mangle]
+pub unsafe extern "C" fn ipdb_add_cached(
+    path_ptr: *const u8,
+    path_len: usize,
+    blob_ptr: *const u8,
+    blob_len: usize,
+) -> i32 {
+    let rel = text(path_ptr, path_len);
+    let blob = slice(blob_ptr, blob_len);
+    STATE.with(|s| {
+        let st = &mut *s.borrow_mut();
+        match crate::cache::decode(blob, &rel) {
+            Ok((mut meta, art)) => {
+                meta.art_source = art.map(|pic| {
+                    let digest = sha1_smol::Sha1::from(&pic).digest().bytes();
+                    if let Some(i) = st.art_blobs.iter().position(|b| {
+                        sha1_smol::Sha1::from(b).digest().bytes() == digest
+                    }) {
+                        i
+                    } else {
+                        st.art_blobs.push(pic);
+                        st.art_blobs.len() - 1
+                    }
+                });
+                st.tracks.push(meta);
+                1
+            }
+            Err(_) => 0,
         }
     })
 }
@@ -323,6 +364,9 @@ macro_rules! buffer_accessors {
 }
 
 buffer_accessors!(ipdb_db_ptr, ipdb_db_len, db);
+/// The cache blob for the most recently added track; the caller stores it and feeds it
+/// back through ipdb_add_cached next time instead of re-reading the file.
+buffer_accessors!(ipdb_blob_ptr, ipdb_blob_len, blob);
 buffer_accessors!(ipdb_art_ptr, ipdb_art_len, art);
 buffer_accessors!(ipdb_font_ptr, ipdb_font_len, font);
 

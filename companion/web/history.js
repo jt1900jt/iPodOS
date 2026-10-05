@@ -7,22 +7,27 @@
 
 const DB_NAME = 'ipodos';
 const STORE = 'history';
+const TAGS = 'tags';
 
 function open() {
   return new Promise((res, rej) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = (e) => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+      if (!db.objectStoreNames.contains(TAGS)) db.createObjectStore(TAGS);
+    };
     req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
   });
 }
 
-async function idb(mode, fn) {
+async function idb(mode, fn, store = STORE) {
   const db = await open();
   try {
     return await new Promise((res, rej) => {
-      const tx = db.transaction(STORE, mode);
-      const out = fn(tx.objectStore(STORE));
+      const tx = db.transaction(store, mode);
+      const out = fn(tx.objectStore(store));
       tx.oncomplete = () => res(out.result ?? out);
       tx.onerror = () => rej(tx.error);
     });
@@ -30,6 +35,41 @@ async function idb(mode, fn) {
     db.close();
   }
 }
+
+// --- parsed tag cache ---
+//
+// Parsing tags means reading every file, which dominates sync time on a large library
+// even when nothing changed. Each entry holds the builder's own blob (metadata plus the
+// cover image) keyed by path, size and mtime, so an edited or replaced file misses the
+// cache and is read again.
+
+const tagKey = (f) => `${f.relPath}|${f.size}|${f.mtime}`;
+
+/** @returns {Map<string, Uint8Array>} */
+export async function loadTags() {
+  const raw = await idb('readonly', (st) => st.get('blobs'), TAGS);
+  return raw instanceof Map ? raw : new Map();
+}
+
+export async function saveTags(map) {
+  await idb('readwrite', (st) => st.put(map, 'blobs'), TAGS);
+}
+
+export async function clearTags() {
+  await idb('readwrite', (st) => st.delete('blobs'), TAGS);
+}
+
+/** Drops entries for files no longer in the library, so the cache cannot grow forever. */
+export function pruneTags(map, files) {
+  const live = new Set(files.map(tagKey));
+  let dropped = 0;
+  for (const key of [...map.keys()]) {
+    if (!live.has(key)) { map.delete(key); dropped++; }
+  }
+  return dropped;
+}
+
+export { tagKey };
 
 /** @returns {Map<number, {plays,skips,lastPlayed,firstSeen,rating}>} */
 export async function load() {

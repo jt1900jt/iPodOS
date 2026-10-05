@@ -3,6 +3,7 @@
 
 pub mod art;
 pub mod build;
+pub mod cache;
 pub mod font;
 pub mod history;
 pub mod journal;
