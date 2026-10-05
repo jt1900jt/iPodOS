@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 use ipdb::build::{build_library, BuildOptions};
 use ipdb::font;
+use ipdb::history::History;
 use ipdb::journal;
 use ipdb::format::*;
 use ipdb::read::{Db, PackHeader};
@@ -39,6 +40,9 @@ enum Cmd {
         /// Override the generation number (default: max(now, previous + 1))
         #[arg(long)]
         generation: Option<u64>,
+        /// Listening history to build smart playlists from, updated in place
+        #[arg(long)]
+        history: Option<PathBuf>,
     },
     /// Print a summary of a built library
     Dump {
@@ -70,6 +74,9 @@ enum Cmd {
         /// Write an Audioscrobbler log here
         #[arg(long)]
         scrobble: Option<PathBuf>,
+        /// Merge the events into this history file, creating it if needed
+        #[arg(long)]
+        merge: Option<PathBuf>,
         /// Delete the journal once it has been read
         #[arg(long)]
         clear: bool,
@@ -109,14 +116,33 @@ fn commit(dir: &Path, name: &str) -> Result<()> {
     fs::rename(&tmp, dir.join(name)).with_context(|| format!("renaming {}", tmp.display()))
 }
 
-fn cmd_build(source: &Path, out: &Path, prefix: &str, generation: Option<u64>) -> Result<()> {
+fn load_history(path: Option<&Path>) -> Result<History> {
+    let Some(path) = path else { return Ok(History::default()) };
+    match fs::read(path) {
+        Ok(data) => History::parse(&data).with_context(|| format!("reading {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(History::default()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn cmd_build(source: &Path, out: &Path, prefix: &str, generation: Option<u64>,
+             history_path: Option<&Path>) -> Result<()> {
     fs::create_dir_all(out)?;
     let t0 = std::time::Instant::now();
     let scanned = scan::scan(source)?;
     for w in &scanned.warnings {
         eprintln!("warning: {w}");
     }
-    let mut lib = build_library(&scanned.tracks, &scanned.playlists, &BuildOptions { path_prefix: prefix.into() });
+    let mut history = load_history(history_path)?;
+    // Record first-seen dates before building, so tracks added in this run are dated now
+    // rather than by file mtime, which copying and retagging both disturb.
+    history.note_seen(scanned.tracks.iter().map(|t| ipdb::build::path_uid(&t.rel_path)), now() as u32);
+    let opts = BuildOptions {
+        path_prefix: prefix.into(),
+        history: history.tracks.clone(),
+        ..BuildOptions::default()
+    };
+    let mut lib = build_library(&scanned.tracks, &scanned.playlists, &opts);
     let gen = generation.unwrap_or_else(|| {
         let n = now();
         match previous_generation(out) {
@@ -160,6 +186,9 @@ fn cmd_build(source: &Path, out: &Path, prefix: &str, generation: Option<u64>) -
         lib.playlists.len(),
         sources.len()
     );
+    if let Some(path) = history_path {
+        fs::write(path, history.write())?;
+    }
     println!(
         "generation {gen}; {DB_NAME} {} bytes, {ART_NAME} {} bytes; {:.2?}",
         bytes.len(),
@@ -321,7 +350,7 @@ fn cmd_dump(path: &Path, tracks: bool, albums: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_journal(dir: &Path, scrobble: Option<&Path>, clear: bool) -> Result<()> {
+fn cmd_journal(dir: &Path, scrobble: Option<&Path>, merge: Option<&Path>, clear: bool) -> Result<()> {
     let path = dir.join("journal.bin");
     let raw = match fs::read(&path) {
         Ok(r) => r,
@@ -379,6 +408,13 @@ fn cmd_journal(dir: &Path, scrobble: Option<&Path>, clear: bool) -> Result<()> {
         })?;
         fs::write(out, log)?;
         println!("wrote {}", out.display());
+    }
+
+    if let Some(hist_path) = merge {
+        let mut history = load_history(Some(hist_path))?;
+        history.merge_journal(&events);
+        fs::write(hist_path, history.write())?;
+        println!("merged into {} ({} tracks tracked)", hist_path.display(), history.tracks.len());
     }
 
     if clear {
@@ -450,10 +486,12 @@ fn cmd_art_export(dir: &Path, class: &str, id: u32, out: &Path) -> Result<()> {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
-        Cmd::Build { source, out, prefix, generation } => cmd_build(&source, &out, &prefix, generation),
+        Cmd::Build { source, out, prefix, generation, history } =>
+            cmd_build(&source, &out, &prefix, generation, history.as_deref()),
         Cmd::Dump { path, tracks, albums } => cmd_dump(&path, tracks, albums),
         Cmd::Fonts { out, ttf_dir, preview } => cmd_fonts(&out, ttf_dir.as_deref(), preview),
-        Cmd::Journal { dir, scrobble, clear } => cmd_journal(&dir, scrobble.as_deref(), clear),
+        Cmd::Journal { dir, scrobble, merge, clear } =>
+            cmd_journal(&dir, scrobble.as_deref(), merge.as_deref(), clear),
         Cmd::Verify { dir } => cmd_verify(&dir),
         Cmd::ArtExport { dir, class, id, out } => cmd_art_export(&dir, &class, id, &out),
     }

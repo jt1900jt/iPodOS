@@ -94,3 +94,67 @@ fn rebuild_is_deterministic() {
     let l2 = build_library(&tracks_rev, &a.playlists, &BuildOptions::default());
     assert_eq!(write::write_library(&l1, 1, 0), write::write_library(&l2, 1, 0));
 }
+
+#[test]
+fn smart_playlists_come_from_history() {
+    use ipdb::build::path_uid;
+    use ipdb::history::{History, Stats};
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let scanned = scan::scan(&root.join("tests/fixtures/library")).unwrap();
+
+    // Without history there are no generated playlists at all.
+    let plain = build_library(&scanned.tracks, &scanned.playlists, &BuildOptions::default());
+    assert_eq!(plain.playlists.len(), 1, "only the fixture .m3u8");
+
+    let mut history = History::default();
+    let played = path_uid("Halcyon Drift/Low Tide Lights/01 After the Static.flac");
+    let rated = path_uid("Mara Vell/Paper Moons/01 Barrow Lane.mp3");
+    history.tracks.insert(played, Stats { plays: 9, last_played: 500, first_seen: 10, ..Default::default() });
+    history.tracks.insert(rated, Stats { rating: 5, first_seen: 20, ..Default::default() });
+    history.note_seen(scanned.tracks.iter().map(|t| path_uid(&t.rel_path)), 99);
+
+    let opts = BuildOptions { history: history.tracks.clone(), ..BuildOptions::default() };
+    let lib = build_library(&scanned.tracks, &scanned.playlists, &opts);
+    let bytes = write::write_library(&lib, 1, 0);
+    let db = Db::parse(&bytes).unwrap();
+
+    let names: Vec<&str> = (0..db.group_count(sec::PLST))
+        .map(|i| db.string(db.group(sec::PLST, i).name))
+        .collect();
+    for want in ["Recently Added", "Top Rated", "Most Played", "Recently Played", "Never Played"] {
+        assert!(names.contains(&want), "missing {want} in {names:?}");
+    }
+
+    let find = |name: &str| {
+        let i = (0..db.group_count(sec::PLST))
+            .find(|&i| db.string(db.group(sec::PLST, i).name) == name)
+            .unwrap();
+        db.group(sec::PLST, i)
+    };
+
+    // Top Rated holds only the 5-star track.
+    let top = find("Top Rated");
+    assert_eq!(top.count, 1);
+    let t = db.track(db.index(sec::IPLS, top.first as usize) as usize);
+    assert_eq!(t.uid, rated);
+
+    // Most Played leads with the most-played track, and excludes unplayed ones.
+    let most = find("Most Played");
+    assert_eq!(most.count, 1);
+    assert_eq!(db.track(db.index(sec::IPLS, most.first as usize) as usize).uid, played);
+
+    // Never Played covers everything else.
+    assert_eq!(find("Never Played").count as usize, db.track_count() - 1);
+
+    // A user playlist of the same name is left alone rather than duplicated.
+    let mut pls = scanned.playlists.clone();
+    pls.push(ipdb::model::PlaylistMeta { name: "Top Rated".into(), entries: vec![] });
+    let lib2 = build_library(&scanned.tracks, &pls, &opts);
+    let bytes2 = write::write_library(&lib2, 1, 0);
+    let db2 = Db::parse(&bytes2).unwrap();
+    let count = (0..db2.group_count(sec::PLST))
+        .filter(|&i| db2.string(db2.group(sec::PLST, i).name) == "Top Rated")
+        .count();
+    assert_eq!(count, 1, "generated list must not duplicate a user playlist");
+}

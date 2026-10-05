@@ -14,13 +14,32 @@ pub const VARIOUS_ARTISTS: &str = "Various Artists";
 pub struct BuildOptions {
     /// Device directory the library root maps to, e.g. "/Music".
     pub path_prefix: String,
+    /// Listening history, used to synthesise the smart playlists below. Empty means
+    /// none are generated.
+    pub history: HashMap<u32, crate::history::Stats>,
+    pub smart_playlists: bool,
+    /// Longest a generated playlist may be. The device holds the whole library in RAM,
+    /// so an unbounded "never played" list on a large library is real memory.
+    pub smart_limit: usize,
 }
 
 impl Default for BuildOptions {
     fn default() -> Self {
-        Self { path_prefix: "/Music".into() }
+        Self {
+            path_prefix: "/Music".into(),
+            history: HashMap::new(),
+            smart_playlists: true,
+            smart_limit: 200,
+        }
     }
 }
+
+/// The generated playlists, in the order they appear on the device.
+const SMART_RECENTLY_ADDED: &str = "Recently Added";
+const SMART_TOP_RATED: &str = "Top Rated";
+const SMART_MOST_PLAYED: &str = "Most Played";
+const SMART_RECENTLY_PLAYED: &str = "Recently Played";
+const SMART_NEVER_PLAYED: &str = "Never Played";
 
 struct StringPool {
     bytes: Vec<u8>,
@@ -94,6 +113,12 @@ fn parent_dir(rel: &str) -> &str {
 fn file_stem(rel: &str) -> &str {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     name.rfind('.').filter(|&i| i > 0).map(|i| &name[..i]).unwrap_or(name)
+}
+
+/// The uid a track gets from its library-relative path. Exposed so the host can key its
+/// history identically without reimplementing the hash.
+pub fn path_uid(rel_path: &str) -> u32 {
+    fnv1a32(rel_path)
 }
 
 fn fnv1a32(s: &str) -> u32 {
@@ -455,6 +480,62 @@ pub fn build_library(input: &[TrackMeta], playlists: &[PlaylistMeta], opts: &Bui
             count: lib.playlist_tracks.len() as u32 - first,
             extra: 0,
         });
+    }
+
+    // Smart playlists, built from the running history. They are generated after the
+    // real playlists so a user playlist of the same name is not displaced, and they are
+    // skipped entirely when there is no history to base them on.
+    if opts.smart_playlists && !opts.history.is_empty() {
+        let stats = |tid: u32| opts.history.get(&lib.tracks[tid as usize].uid).copied()
+            .unwrap_or_default();
+        let all: Vec<u32> = (0..lib.tracks.len() as u32).collect();
+
+        let mut generated: Vec<(&str, Vec<u32>)> = Vec::new();
+
+        let mut recent: Vec<u32> = all.iter().copied()
+            .filter(|&t| stats(t).first_seen > 0).collect();
+        recent.sort_by_key(|&t| std::cmp::Reverse(stats(t).first_seen));
+        generated.push((SMART_RECENTLY_ADDED, recent));
+
+        let mut rated: Vec<u32> = all.iter().copied().filter(|&t| stats(t).rating >= 4).collect();
+        rated.sort_by_key(|&t| std::cmp::Reverse(stats(t).rating));
+        generated.push((SMART_TOP_RATED, rated));
+
+        let mut played: Vec<u32> = all.iter().copied().filter(|&t| stats(t).plays > 0).collect();
+        played.sort_by_key(|&t| std::cmp::Reverse(stats(t).plays));
+        generated.push((SMART_MOST_PLAYED, played));
+
+        let mut lately: Vec<u32> = all.iter().copied()
+            .filter(|&t| stats(t).last_played > 0).collect();
+        lately.sort_by_key(|&t| std::cmp::Reverse(stats(t).last_played));
+        generated.push((SMART_RECENTLY_PLAYED, lately));
+
+        // Never played: in library order, which keeps albums together.
+        let never: Vec<u32> = all.iter().copied().filter(|&t| stats(t).plays == 0).collect();
+        generated.push((SMART_NEVER_PLAYED, never));
+
+        let existing: BTreeSet<String> =
+            lib.playlists.iter().map(|p| {
+                let off = p.name as usize;
+                let end = pool.bytes[off..].iter().position(|&b| b == 0).map(|n| off + n)
+                    .unwrap_or(pool.bytes.len());
+                fold(std::str::from_utf8(&pool.bytes[off..end]).unwrap_or(""))
+            }).collect();
+
+        for (name, mut list) in generated {
+            if list.is_empty() || existing.contains(&fold(name)) {
+                continue;
+            }
+            list.truncate(opts.smart_limit);
+            let first = lib.playlist_tracks.len() as u32;
+            lib.playlist_tracks.extend_from_slice(&list);
+            lib.playlists.push(GroupRec {
+                name: pool.intern(name),
+                first,
+                count: list.len() as u32,
+                extra: 0,
+            });
+        }
     }
 
     // Jump rows.

@@ -30,6 +30,7 @@ struct State {
     playlists: Vec<PlaylistMeta>,
     /// Embedded or sidecar art, indexed by `TrackMeta::art_source`.
     art_blobs: Vec<Vec<u8>>,
+    history: std::collections::HashMap<u32, crate::history::Stats>,
     db: Vec<u8>,
     art: Vec<u8>,
     font: Vec<u8>,
@@ -182,6 +183,36 @@ pub unsafe extern "C" fn ipdb_add_playlist(
     STATE.with(|s| s.borrow_mut().playlists.push(PlaylistMeta { name, entries }));
 }
 
+/// Adds one track's listening history, keyed by the uid the database derives from the
+/// library-relative path. Call before `ipdb_build`; without history no smart playlists
+/// are generated.
+#[no_mangle]
+pub extern "C" fn ipdb_add_history(uid: u32, plays: u32, skips: u32, last_played: u32,
+                                   first_seen: u32, rating: u32) {
+    STATE.with(|s| {
+        s.borrow_mut().history.insert(
+            uid,
+            crate::history::Stats {
+                plays,
+                skips,
+                last_played,
+                first_seen,
+                rating: rating.min(5) as u8,
+            },
+        );
+    });
+}
+
+/// The uid the database would give a library-relative path, so the host can key its
+/// history the same way without duplicating the hash.
+///
+/// # Safety
+/// Pointers must be valid for their lengths.
+#[no_mangle]
+pub unsafe extern "C" fn ipdb_path_uid(path_ptr: *const u8, path_len: usize) -> u32 {
+    crate::build::path_uid(&text(path_ptr, path_len))
+}
+
 #[no_mangle]
 pub extern "C" fn ipdb_track_count() -> u32 {
     STATE.with(|s| s.borrow().tracks.len() as u32)
@@ -196,7 +227,11 @@ pub unsafe extern "C" fn ipdb_build(prefix_ptr: *const u8, prefix_len: usize, ge
     let prefix = text(prefix_ptr, prefix_len);
     STATE.with(|s| {
         let st = &mut *s.borrow_mut();
-        let opts = BuildOptions { path_prefix: if prefix.is_empty() { "/Music".into() } else { prefix } };
+        let opts = BuildOptions {
+            path_prefix: if prefix.is_empty() { "/Music".into() } else { prefix },
+            history: std::mem::take(&mut st.history),
+            ..BuildOptions::default()
+        };
         let mut lib = build_library(&st.tracks, &st.playlists, &opts);
 
         let sources = lib.art_sources.clone();

@@ -38,6 +38,15 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 - **Screen transitions.** The 7G LCD tops out at 39 fps full-screen, so a ~200 ms slide is
   feasible; needs measuring against the partial-redraw budget first.
 
+## Companion
+
+- **Scrobbling.** `ipdb journal --scrobble` writes an Audioscrobbler log, but nothing
+  uploads it; the browser could submit to Last.fm or ListenBrainz directly.
+- **Playlist editing.** Playlists come only from .m3u files or the generated smart lists;
+  the browser could build them against the scanned library.
+- **Transcode on sync.** ffmpeg compiled to WebAssembly, for hi-res down to 16/44 or
+  lossless to lossy when space is short.
+
 ## Audio
 
 - **Headphone hiss.** Present in both the shell and stock Rockbox, with and without

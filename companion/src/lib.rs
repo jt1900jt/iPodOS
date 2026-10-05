@@ -4,6 +4,7 @@
 pub mod art;
 pub mod build;
 pub mod font;
+pub mod history;
 pub mod journal;
 pub mod format;
 pub mod model;

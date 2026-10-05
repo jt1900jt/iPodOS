@@ -59,6 +59,7 @@
     <div class="row">
       <button id="sync" disabled>Sync to iPod</button>
       <button id="journal" class="secondary" disabled>Read play history</button>
+      <button id="forget" class="secondary">Forget history</button>
       <span class="status" id="syncStatus"></span>
     </div>
     <progress id="bar" value="0" max="1" hidden></progress>
@@ -74,6 +75,7 @@
 import { Link, openUsb, USB_FILTERS } from './ipodlink.js';
 import { Builder } from './builder.js';
 import * as sync from './sync.js';
+import * as history from './history.js';
 
 const $ = (id) => document.getElementById(id);
 let transport = null, link = null, dir = null, hostFiles = null, builder = null, busy = false;
@@ -97,6 +99,7 @@ function refresh() {
   $('pick').disabled = busy;
   $('sync').disabled = !link || !hostFiles || busy;
   $('journal').disabled = !link || busy;
+  $('forget').disabled = busy;
   markDone('s-connect', !!link);
   markDone('s-folder', !!hostFiles);
 }
@@ -160,6 +163,15 @@ async function buildLibrary(files) {
     builder = await Builder.load();
   }
   builder.reset();
+
+  // Feed the running history in before the build, so the smart playlists reflect
+  // everything listened to so far rather than only this session.
+  const hist = await history.load();
+  const uids = files.map((f) => builder.pathUid(f.relPath));
+  const added = history.noteSeen(hist, uids);
+  if (added) await history.save(hist);
+  for (const [uid, s] of hist) builder.addHistory(uid, s);
+  log(`history: ${hist.size} tracks tracked${added ? `, ${added} newly added` : ''}`);
   const folderArt = new Map();
   let n = 0;
   for (const f of files) {
@@ -203,6 +215,16 @@ $('sync').onclick = () => guard(async () => {
   $('bar').hidden = false;
   $('summary').hidden = true;
   const t0 = performance.now();
+
+  // Take the play history off the device first: it is cleared when read, and the
+  // library about to be written should already reflect it.
+  const journal = await sync.pullJournal(link);
+  if (journal) {
+    const hist = await history.load();
+    const counts = history.mergeJournal(hist, journal);
+    await history.save(hist);
+    log(`play history merged: ${counts.plays} plays, ${counts.skips} skips, ${counts.ratings} ratings`);
+  }
   const r = await sync.run(link, hostFiles, buildLibrary, (e) => {
     if (e.total) { $('bar').max = e.total; $('bar').value = e.done || 0; }
     setStatus('syncStatus', e.phase);
@@ -222,22 +244,25 @@ $('sync').onclick = () => guard(async () => {
 
 $('journal').onclick = () => guard(async () => {
   const data = await sync.pullJournal(link);
-  if (!data) { setStatus('syncStatus', 'no play history yet', 'warn'); return; }
-  const events = [];
-  for (let o = 0; o + 16 <= data.length; o += 16) {
-    const v = new DataView(data.buffer, data.byteOffset + o);
-    events.push({ kind: data[o], uid: v.getUint32(4, true), when: v.getUint32(8, true) });
+  const hist = await history.load();
+  if (data) {
+    const counts = history.mergeJournal(hist, data);
+    await history.save(hist);
+    setStatus('syncStatus',
+      `${counts.plays} plays, ${counts.skips} skips, ${counts.ratings} ratings`, 'ok');
+    log(`play history merged: ${counts.plays} plays, ${counts.skips} skips`);
+  } else {
+    setStatus('syncStatus', 'nothing new since the last sync', 'warn');
   }
-  const plays = events.filter((e) => e.kind === 1).length;
-  const skips = events.filter((e) => e.kind === 2).length;
-  setStatus('syncStatus', `${plays} plays, ${skips} skips`, 'ok');
-  log(`play history: ${events.length} events (${plays} plays, ${skips} skips)`);
-  const blob = new Blob([data], { type: 'application/octet-stream' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'journal.bin';
-  a.textContent = 'download journal.bin';
-  $('syncDetail').replaceChildren(a);
+  const played = [...hist.values()].reduce((n, s) => n + s.plays, 0);
+  $('syncDetail').textContent =
+    `${hist.size} tracks tracked, ${played} plays all time — smart playlists update on the next sync`;
+});
+
+$('forget').onclick = () => guard(async () => {
+  await history.clear();
+  setStatus('syncStatus', 'history cleared', 'warn');
+  $('syncDetail').textContent = 'smart playlists will be empty until tracks are played again';
 });
 
 navigator.usb?.addEventListener('disconnect', () => {

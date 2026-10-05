@@ -94,6 +94,20 @@ export class Builder {
     this.free(np, nl);
   }
 
+  /** uid the database derives from a library-relative path. */
+  pathUid(relPath) {
+    const [p, l] = this.putText(relPath);
+    const uid = this.x.ipdb_path_uid(p, l) >>> 0;
+    this.free(p, l);
+    return uid;
+  }
+
+  /** Feeds one track's running history in; call before build() to get smart playlists. */
+  addHistory(uid, s) {
+    this.x.ipdb_add_history(uid >>> 0, s.plays >>> 0, s.skips >>> 0,
+                            s.lastPlayed >>> 0, s.firstSeen >>> 0, s.rating >>> 0);
+  }
+
   get trackCount() {
     return this.x.ipdb_track_count();
   }

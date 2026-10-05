@@ -225,6 +225,19 @@ never leaves partial state. A trailing partial record is ignored by the reader, 
 records with an unknown type, so a newer device can add event types without breaking an
 older companion.
 
+### Smart playlists
+
+The companion keeps a running history on the host (plays, skips, ratings, first seen)
+keyed by the same uid the database derives from a track's library-relative path, so it
+survives a rebuild as long as the file stays put. Each sync folds the device journal into
+it, then generates playlists from it: Recently Added, Top Rated, Most Played, Recently
+Played and Never Played. These are ordinary playlist records, so the device needs no
+knowledge of them.
+
+Generated lists are capped (200 entries by default), since the device holds the whole
+library in RAM, and one is skipped entirely when a user playlist of the same name exists.
+Without history, none are generated.
+
 A play counts when the track reached half its length or four minutes, whichever comes
 first; anything short of that is a skip. The device tracks the furthest point reached
 rather than the last sampled position, since playback resets elapsed for the next track
