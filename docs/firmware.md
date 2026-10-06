@@ -141,6 +141,19 @@ capped against the distance remaining so the end of a track is approached smooth
 - No animated transitions between screens.
 - Cover Flow is static: covers change on the wheel with no motion between them.
 
+## Boot animation
+
+`shell_boot.c` fills the second the shell takes to come up: the wordmark fades in and a
+progress line fills as the library loads. Frames repaint only the strip the animation
+occupies, since a full-screen push is ~25 ms and the animation would otherwise be a
+measurable part of boot time.
+
+Progress is driven by the work rather than a timer, so it never delays boot: the library
+read reports as it goes, and the checksum, which dominates when it runs at all, accounts
+for the rest. A library whose stamp matches skips the checksum and the bar jumps
+accordingly. Under the simulator, setting `IPODOS_BOOT_SHOT` captures each frame, which
+the script harness cannot reach because it only runs once the shell is up.
+
 ## Sync
 
 `shell_sync.c` provides the filesystem operations the companion drives over the link
