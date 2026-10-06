@@ -31,6 +31,13 @@ Deferred items, outside the current phase. See firmware.md for phase-by-phase sc
 
 ## UI
 
+- **Home scrolling during playback.** Still sluggish with a track playing. Unlike list
+  views, Home repaints the whole screen for every selection change: the blurred art
+  behind the menu and the now-playing card are both redrawn, which is a ~25 ms push plus
+  the blur blit. Give it the treatment the lists and Cover Flow already have — repaint
+  only the label column, keeping the art and background from the previous frame — and
+  measure before and after on hardware rather than assuming the push dominates.
+
 - **Cover Flow motion on hardware.** The slide is in, but its frame rate has only been
   seen in the simulator; check it against the 39 fps ceiling on the device and shorten the
   slide if it drags.
